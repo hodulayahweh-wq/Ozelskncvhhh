@@ -4,32 +4,45 @@ from flask import Flask, render_template_string, request, jsonify, session, redi
 # --- SİSTEM AYARLARI ---
 SISTEM = {
     "apis": {}, 
-    "panel_sifre": "19786363", # Panel giriş şifren
+    "admin_sifre": "19786363",
+    "sorgu_sifre": "2026lordvipkey",
+    "resim_url": "https://r.resimlink.com/7I1uB6S.jpg", # Varsayılan resim
     "baslangic": datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
 }
 
 web_app = Flask(__name__)
-web_app.secret_key = "nabi_ultra_secure_2026"
+web_app.secret_key = "lord_ultimate_v36_final"
 
-# --- REKLAM VE TELEGRAM LİNKİ TEMİZLEYİCİ ---
 def temizle(metin):
     if not isinstance(metin, str): metin = str(metin)
-    # t.me linklerini, @ kullanıcı adlarını ve reklam kelimelerini siler
     metin = re.sub(r'(https?://)?t\.me/\S+', '', metin)
     metin = re.sub(r'@\S+', '', metin)
-    metin = re.sub(r'(Sorgu Paneli|Reklam|İletişim|Telegram|Satın Al)', '', metin, flags=re.I)
+    metin = re.sub(r'(Sorgu Paneli|Reklam|İletişim|Telegram|Satın Al|zyrdaware|2026tr)', '', metin, flags=re.I)
     return metin.strip()
 
-# --- TASARIMLAR ---
+# --- TASARIM: ADMIN PANELİ ---
 HTML_ADMIN = """
-<body style="background:#050505; color:white; font-family:sans-serif; padding:20px;">
-    <div style="max-width:700px; margin:auto; background:#111; padding:30px; border-radius:20px; border:1px solid #222;">
-        <h2 style="color:#0095f6">⚙️ Admin Paneli</h2>
+<body style="background:#000; color:white; font-family:sans-serif; padding:20px;">
+    <div style="max-width:800px; margin:auto; background:#111; padding:30px; border-radius:20px; border:1px solid #222;">
+        <h2 style="color:#0095f6">⚙️ LORD Admin Kontrol</h2>
+        
         <div style="background:#1a1a1a; padding:15px; border-radius:12px; margin-bottom:20px;">
-            <input type="text" id="an" placeholder="Sorgu Adı" style="padding:10px; background:#000; color:white; border:1px solid #333; width:35%; border-radius:5px;">
-            <input type="text" id="au" placeholder="API Link (Sonu =)" style="padding:10px; background:#000; color:white; border:1px solid #333; width:40%; border-radius:5px;">
-            <button onclick="save()" style="padding:10px; background:#0095f6; color:white; border:none; border-radius:5px; cursor:pointer;">EKLE</button>
+            <h3>Görsel & Şifre Ayarları</h3>
+            <input type="text" id="rurl" value="{{resim}}" placeholder="Ana Sayfa Resim URL" style="width:100%; padding:10px; background:#000; color:white; border:1px solid #333; margin-bottom:10px;">
+            <div style="display:flex; gap:10px;">
+                <input type="text" id="as" value="{{asifre}}" placeholder="Admin Şifre" style="flex:1; padding:8px; background:#000; color:white; border:1px solid #333;">
+                <input type="text" id="ss" value="{{ssifre}}" placeholder="VIP Şifre" style="flex:1; padding:8px; background:#000; color:white; border:1px solid #333;">
+            </div>
+            <button onclick="updateSettings()" style="width:100%; background:#34c759; color:white; border:none; padding:12px; border-radius:8px; margin-top:10px; cursor:pointer; font-weight:bold;">TÜMÜNÜ KAYDET VE GÜNCELLE</button>
         </div>
+
+        <div style="background:#1a1a1a; padding:15px; border-radius:12px; margin-bottom:20px;">
+            <h3>Yeni Sorgu Ekle</h3>
+            <input type="text" id="an" placeholder="Sorgu Adı" style="padding:10px; background:#000; color:white; border:1px solid #333; width:30%;">
+            <input type="text" id="au" placeholder="API Link (Sonu =)" style="padding:10px; background:#000; color:white; border:1px solid #333; width:45%;">
+            <button onclick="save()" style="padding:10px 20px; background:#0095f6; color:white; border:none; border-radius:5px; cursor:pointer;">EKLE</button>
+        </div>
+
         <div id="list">
             {% for name in apis %}
                 <div style="display:flex; justify-content:space-between; background:#0a0a0a; padding:12px; margin-bottom:8px; border-radius:8px; border-left:4px solid #0095f6;">
@@ -38,104 +51,233 @@ HTML_ADMIN = """
                 </div>
             {% endfor %}
         </div>
-        <br><a href="/site" target="_blank" style="display:block; text-align:center; background:#34c759; color:white; padding:15px; text-decoration:none; border-radius:10px; font-weight:bold;">🌐 SORGULAMA SİTESİNİ AÇ</a>
     </div>
     <script>
     function save(){let n=document.getElementById('an').value;let u=document.getElementById('au').value;if(n&&u)fetch('/add_api?name='+n+'&url='+btoa(u)).then(()=>location.reload());}
     function del(n){fetch('/del_api?name='+n).then(()=>location.reload());}
+    function updateSettings(){
+        let a = document.getElementById('as').value;
+        let s = document.getElementById('ss').value;
+        let r = btoa(document.getElementById('rurl').value);
+        fetch('/update_settings?admin='+a+'&sorgu='+s+'&resim='+r).then(()=>alert('Sistem Başarıyla Güncellendi!'));
+    }
     </script>
 </body>"""
 
+# --- TASARIM: SORGULAMA SİTESİ ---
 HTML_SITE = """
 <!DOCTYPE html>
 <html lang="tr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sorgu Merkezi</title>
+    <title>LORD VIP PANEL</title>
     <style>
-        body { background:#000; color:white; font-family:sans-serif; margin:0; display:flex; align-items:center; justify-content:center; height:100vh; }
-        .box { width:90%; max-width:400px; text-align:center; }
+        :root { --blue: #0095f6; --bg: #000; }
+        body { margin:0; background: var(--bg); color:white; font-family:-apple-system,sans-serif; overflow:hidden; }
         .tik { display:inline-block; width:18px; height:18px; background:url('https://upload.wikimedia.org/wikipedia/commons/e/e4/Twitter_Verified_Badge.svg') no-repeat center; background-size:contain; margin-left:5px; vertical-align:middle; }
-        select, input, button { width:100%; padding:15px; border-radius:12px; border:1px solid #333; background:#111; color:white; margin-bottom:10px; box-sizing:border-box; font-size:16px; }
-        button { background:#0095f6; border:none; font-weight:bold; cursor:pointer; }
-        #res { margin-top:20px; background:#0a0a0a; padding:15px; border-radius:12px; text-align:left; display:none; white-space:pre-wrap; font-family:monospace; font-size:13px; border:1px solid #222; color:#4ade80; max-height:250px; overflow-y:auto; }
+        
+        /* Animasyonlu Sidebar Arka Planı */
+        .sidebar { position:fixed; top:0; left:-280px; width:260px; height:100%; z-index:2000; transition:0.4s; padding:20px; box-sizing:border-box;
+            background: linear-gradient(45deg, #050505, #121212, #000); background-size: 400% 400%; animation: gradientBG 10s ease infinite; border-right:1px solid #333; }
+        @keyframes gradientBG { 0% {background-position: 0% 50%;} 50% {background-position: 100% 50%;} 100% {background-position: 0% 50%;} }
+        
+        .sidebar.active { left:0; }
+        .nav-item { padding:14px; margin-bottom:8px; border-radius:12px; cursor:pointer; background: rgba(255,255,255,0.03); border:1px solid #222; transition:0.3s; font-weight:500; }
+        .nav-item:hover { background:var(--blue); transform: translateX(5px); }
+        
+        /* Header */
+        .header { position:fixed; top:0; width:100%; height:60px; background:rgba(0,0,0,0.85); backdrop-filter:blur(15px); display:flex; align-items:center; padding:0 20px; z-index:1000; border-bottom:1px solid #222; }
+        .menu-btn { font-size:26px; cursor:pointer; color:var(--blue); }
+        
+        /* Ana Ekran */
+        .main { min-height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding-top:60px; box-sizing:border-box; }
+        
+        /* Animasyonlu Resim Çerçevesi */
+        .img-container { position:relative; width:280px; height:280px; margin-bottom:20px; overflow:hidden; border-radius:30px; border:3px solid var(--blue); animation: glow 2s ease-in-out infinite alternate; }
+        .home-img { width:100%; height:100%; object-fit:cover; transition: 0.5s; }
+        .img-overlay { position:absolute; bottom:0; width:100%; background:rgba(0,149,246,0.6); color:white; font-weight:bold; padding:8px 0; font-size:14px; text-align:center; animation: textSlide 3s linear infinite; }
+        
+        @keyframes glow { from {box-shadow: 0 0 10px rgba(0,149,246,0.2);} to {box-shadow: 0 0 30px rgba(0,149,246,0.6);} }
+        @keyframes textSlide { 0% {opacity:0.2;} 50% {opacity:1;} 100% {opacity:0.2;} }
+
+        /* Kart Yapısı */
+        .card { background:rgba(10,10,10,0.9); padding:30px; border-radius:24px; border:1px solid #222; width:90%; max-width:420px; text-align:center; animation: fadeIn 0.5s ease; }
+        @keyframes fadeIn { from {opacity:0; transform:scale(0.95);} to {opacity:1; transform:scale(1);} }
+
+        input { width:100%; padding:16px; margin-bottom:15px; border-radius:14px; border:1px solid #333; background:#000; color:white; box-sizing:border-box; outline:none; font-size:16px; }
+        button { width:100%; padding:16px; border-radius:14px; border:none; background:var(--blue); color:white; font-weight:bold; cursor:pointer; font-size:16px; }
+        
+        #res { margin-top:20px; background:#000; padding:15px; border-radius:12px; text-align:left; white-space:pre-wrap; font-family:monospace; font-size:12px; border:1px solid #222; display:none; color:#4ade80; max-height:300px; overflow-y:auto; border-left: 4px solid var(--blue); }
+        .tg-btn { display:inline-flex; align-items:center; justify-content:center; width:50px; height:50px; background:#222; border-radius:50%; margin:10px; cursor:pointer; font-size:20px; transition:0.3s; text-decoration:none; color:white; }
+        .tg-btn:hover { background:var(--blue); transform:scale(1.1); }
     </style>
 </head>
 <body>
-    <div class="box">
-        <h1>Nabi Verified<span class="tik"></span></h1>
-        <select id="api_select">{% for name in apis %}<option value="{{name}}">{{name}}</option>{% endfor %}</select>
-        <input type="text" id="target" placeholder="Sorgulanacak veriyi girin...">
-        <button onclick="sorgula()">HIZLI SORGULA</button>
-        <div id="res"></div>
+    <div class="header">
+        <div class="menu-btn" onclick="toggleMenu()">☰</div>
+        <div style="margin-left:15px; font-weight:bold; font-size:22px; letter-spacing:1px;">LORD VIP<span class="tik"></span></div>
     </div>
+
+    <div class="sidebar" id="sidebar">
+        <h2 style="color:var(--blue); margin-top:10px;">LORD PANEL<span class="tik"></span></h2>
+        <div class="nav-item" onclick="goHome()">🏠 ANA SAYFA</div>
+        <hr style="border:0; border-top:1px solid #333; margin:15px 0;">
+        <div style="color:gray; font-size:11px; margin-bottom:10px; padding-left:5px;">SORGU SERVİSLERİ</div>
+        <div id="menu-items">
+            {% for name in apis %}
+                <div class="nav-item" onclick="loadSorgu('{{name}}')">💎 {{name}}</div>
+            {% endfor %}
+        </div>
+        
+        <div style="position:absolute; bottom:30px; width:220px; text-align:center;">
+            <p style="color:gray; font-size:11px;">İletişim & Destek</p>
+            <a href="https://t.me/lordsystemv" target="_blank" class="tg-btn">⚡</a>
+            <a href="https://t.me/LordDestekHat" target="_blank" class="tg-btn">👤</a>
+        </div>
+    </div>
+
+    <div class="main" id="app">
+        <div id="home-screen" style="text-align:center;">
+            <div class="img-container">
+                <img src="{{resim}}" class="home-img">
+                <div class="img-overlay">LORD SORGU AKTİF</div>
+            </div>
+            <h1 style="margin:5px 0;">HOŞ GELDİN LORD<span class="tik"></span></h1>
+            <p style="color:gray; font-size:14px;">Kişiye özel, hızlı ve güvenli VIP panel.</p>
+            <button onclick="toggleMenu()" style="width:240px; border-radius:40px; margin-top:15px; box-shadow:0 10px 20px rgba(0,149,246,0.3);">HAYDİ BAŞLA</button>
+        </div>
+
+        <div id="sorgu-screen" style="display:none;" class="card">
+            <h2 id="stitle" style="color:var(--blue); margin-top:0;"></h2>
+            <div id="input-container"></div>
+            <button onclick="execSorgu()" id="sbtn">VERİLERİ GETİR</button>
+            <div id="res"></div>
+            <button onclick="downloadResult()" id="dbtn" style="background:#34c759; margin-top:10px; display:none;">📄 SONUÇLARI İNDİR (.TXT)</button>
+        </div>
+    </div>
+
     <script>
-    async function sorgula() {
-        const api = document.getElementById('api_select').value;
-        const val = document.getElementById('target').value;
-        const resDiv = document.getElementById('res');
-        if(!val) return;
-        resDiv.style.display = "block"; resDiv.innerText = "⚡ Sorgulanıyor...";
-        try {
-            const r = await fetch('/do_sorgu?name='+api+'&val='+val);
-            const data = await r.json();
-            resDiv.innerText = typeof data.result === 'object' ? JSON.stringify(data.result, null, 2) : data.result;
-        } catch { resDiv.innerText = "❌ Hata oluştu!"; }
-    }
+        let currentSorgu = "";
+        function toggleMenu() { document.getElementById('sidebar').classList.toggle('active'); }
+        function goHome() {
+            document.getElementById('home-screen').style.display = 'block';
+            document.getElementById('sorgu-screen').style.display = 'none';
+            toggleMenu();
+        }
+        function loadSorgu(name) {
+            currentSorgu = name;
+            document.getElementById('home-screen').style.display = 'none';
+            document.getElementById('sorgu-screen').style.display = 'block';
+            document.getElementById('stitle').innerText = name;
+            document.getElementById('res').style.display = 'none';
+            document.getElementById('dbtn').style.display = 'none';
+            
+            const cont = document.getElementById('input-container');
+            if(name.toLowerCase().includes("ad soyad")) {
+                cont.innerHTML = '<input type="text" id="v1" placeholder="Adını girin..."><input type="text" id="v2" placeholder="Soyadını girin...">';
+            } else {
+                cont.innerHTML = '<input type="text" id="v1" placeholder="Sorgu verisini girin...">';
+            }
+            toggleMenu();
+        }
+
+        async function execSorgu() {
+            const v1 = document.getElementById('v1').value;
+            const v2 = document.getElementById('v2') ? document.getElementById('v2').value : "";
+            const resBox = document.getElementById('res');
+            if(!v1) return;
+            resBox.style.display = "block"; resBox.innerText = "⚡ LORD SİSTEM SORGULUYOR...";
+            
+            try {
+                let url = `/do_sorgu?name=${currentSorgu}&val=${v1}`;
+                if(v2) url += `&val2=${v2}`;
+                const r = await fetch(url);
+                const data = await r.json();
+                resBox.innerText = typeof data.result === 'object' ? JSON.stringify(data.result, null, 2) : data.result;
+                document.getElementById('dbtn').style.display = 'block';
+            } catch { resBox.innerText = "❌ Hata: API Bağlantısı Kesildi!"; }
+        }
+
+        function downloadResult() {
+            const text = document.getElementById('res').innerText;
+            const blob = new Blob([text], {type: "text/plain"});
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = currentSorgu + "_lord_sonuc.txt";
+            a.click();
+        }
     </script>
 </body>
 </html>"""
 
 # --- BACKEND ---
 @web_app.route('/')
-def home():
-    if not session.get('logged_in'):
-        return render_template_string('<body style="background:#000;color:white;text-align:center;padding-top:100px;"><h2>🔐 Giriş</h2><form method="POST" action="/login"><input type="password" name="s"><br><br><button>GİRİŞ</button></form></body>')
-    return redirect(url_for('admin'))
+def index(): return redirect(url_for('site'))
 
-@web_app.route('/login', methods=['POST'])
-def login():
-    if request.form.get('s') == SISTEM["panel_sifre"]:
-        session['logged_in'] = True
-        return redirect(url_for('admin'))
-    return "Hatalı Şifre!"
-
-@web_app.route('/admin')
-def admin():
-    if not session.get('logged_in'): return redirect(url_for('home'))
-    return render_template_string(HTML_ADMIN, apis=SISTEM["apis"])
+@web_app.route('/vip_login', methods=['GET', 'POST'])
+def vip_login():
+    if request.method == 'POST':
+        if request.form.get('p') == SISTEM["sorgu_sifre"]:
+            session['vip'] = True
+            return redirect(url_for('site'))
+    return '<body style="background:#000;color:white;text-align:center;padding-top:100px;font-family:sans-serif;"><div style="background:#0a0a0a;display:inline-block;padding:40px;border-radius:24px;border:1px solid #333;"><h2>🔐 LORD VIP GİRİŞ</h2><form method="POST"><input type="password" name="p" placeholder="Anahtar Kodu Girin" style="padding:15px; border-radius:12px; border:1px solid #444; background:#000; color:white; width:260px; text-align:center;"><br><br><button style="background:#0095f6;color:white;border:none;padding:12px 40px;border-radius:12px;cursor:pointer;font-weight:bold;">SİSTEME GİR</button></form></div></body>'
 
 @web_app.route('/site')
 def site():
-    return render_template_string(HTML_SITE, apis=SISTEM["apis"])
+    if not session.get('vip'): return redirect(url_for('vip_login'))
+    return render_template_string(HTML_SITE, apis=SISTEM["apis"], resim=SISTEM["resim_url"])
+
+@web_app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        if request.form.get('p') == SISTEM["admin_sifre"]:
+            session['admin'] = True
+            return redirect(url_for('admin'))
+    return '<body style="background:#000;color:white;text-align:center;padding-top:100px;"><form method="POST"><h2>Admin</h2><input type="password" name="p"><button>GİR</button></form></body>'
+
+@web_app.route('/admin')
+def admin():
+    if not session.get('admin'): return redirect(url_for('login'))
+    return render_template_string(HTML_ADMIN, apis=SISTEM["apis"], asifre=SISTEM["admin_sifre"], ssifre=SISTEM["sorgu_sifre"], resim=SISTEM["resim_url"])
+
+@web_app.route('/update_settings')
+def update_settings():
+    if not session.get('admin'): return "No"
+    SISTEM["admin_sifre"] = request.args.get('admin')
+    SISTEM["sorgu_sifre"] = request.args.get('sorgu')
+    res_b64 = request.args.get('resim')
+    if res_b64: SISTEM["resim_url"] = base64.b64decode(res_b64).decode()
+    return jsonify({"status":"ok"})
 
 @web_app.route('/add_api')
 def add_api():
+    if not session.get('admin'): return "No"
     n=request.args.get('name'); u=request.args.get('url')
     if n and u: SISTEM["apis"][n] = base64.b64decode(u).decode()
     return jsonify({"status":"ok"})
 
 @web_app.route('/del_api')
 def del_api():
+    if not session.get('admin'): return "No"
     n=request.args.get('name')
     if n in SISTEM["apis"]: del SISTEM["apis"][n]
     return jsonify({"status":"ok"})
 
 @web_app.route('/do_sorgu')
 def do_sorgu():
-    name=request.args.get('name'); val=request.args.get('val')
+    if not session.get('vip'): return jsonify({"result":"No"})
+    name=request.args.get('name'); v1=request.args.get('val'); v2=request.args.get('val2', '')
     api_url = SISTEM["apis"].get(name)
-    if not api_url: return jsonify({"result": "API Tanımsız!"})
+    if not api_url: return jsonify({"result": "API Error"})
     try:
+        final_url = api_url + v1
+        if v2 and "ad=" in api_url: final_url = api_url + v1 + "&soyad=" + v2
         with httpx.Client(timeout=30.0, follow_redirects=True) as client:
-            r = client.get(api_url + val)
+            r = client.get(final_url)
             temiz_veri = temizle(r.text)
-            try:
-                return jsonify({"result": json.loads(temiz_veri)})
-            except:
-                return jsonify({"result": temiz_veri})
-    except Exception as e:
-        return jsonify({"result": f"Bağlantı Hatası: {str(e)}"})
+            try: return jsonify({"result": json.loads(temiz_veri)})
+            except: return jsonify({"result": temiz_veri})
+    except Exception as e: return jsonify({"result": f"Error: {str(e)}"})
 
 if __name__ == "__main__":
     web_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))

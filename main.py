@@ -1,45 +1,44 @@
-import os, asyncio, threading, httpx, datetime, base64, re, json
+import os, datetime, base64, json, re, httpx
 from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
-from telegram.ext import ApplicationBuilder
 
-# --- AYARLAR ---
+# --- SİSTEM AYARLARI ---
 SISTEM = {
     "apis": {}, 
-    "admin_id": 7690743437,
-    "ana_token": "8586246924:AAEdEGEQn9tjBBAQKw-nJ_NvDG5P-G3T8cc",
-    "panel_sifre": "19786363",
+    "panel_sifre": "19786363", # Panel giriş şifren
     "baslangic": datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
 }
 
 web_app = Flask(__name__)
-web_app.secret_key = "nabi_fix_final_v30"
+web_app.secret_key = "nabi_ultra_secure_2026"
 
-# --- HIZLI BAĞLANTI HAVUZU ---
-# Timeout süresini 30 saniyeye çıkardım, böylece sorgu takılmaz.
-limits = httpx.Limits(max_connections=200, max_keepalive_connections=100)
-global_client = httpx.AsyncClient(timeout=30.0, limits=limits, follow_redirects=True)
-
-# --- REKLAM TEMİZLEYİCİ ---
-def veri_temizle(metin):
+# --- REKLAM VE TELEGRAM LİNKİ TEMİZLEYİCİ ---
+def temizle(metin):
     if not isinstance(metin, str): metin = str(metin)
-    # Telegram linklerini ve kullanıcı adlarını siler
+    # t.me linklerini, @ kullanıcı adlarını ve reklam kelimelerini siler
     metin = re.sub(r'(https?://)?t\.me/\S+', '', metin)
     metin = re.sub(r'@\S+', '', metin)
+    metin = re.sub(r'(Sorgu Paneli|Reklam|İletişim|Telegram|Satın Al)', '', metin, flags=re.I)
     return metin.strip()
 
 # --- TASARIMLAR ---
 HTML_ADMIN = """
 <body style="background:#050505; color:white; font-family:sans-serif; padding:20px;">
-    <div style="max-width:800px; margin:auto; background:#111; padding:30px; border-radius:20px; border:1px solid #222;">
+    <div style="max-width:700px; margin:auto; background:#111; padding:30px; border-radius:20px; border:1px solid #222;">
         <h2 style="color:#0095f6">⚙️ Admin Paneli</h2>
-        <input type="text" id="an" placeholder="Sorgu Adı" style="padding:10px; background:#000; color:white; border:1px solid #333; width:30%;">
-        <input type="text" id="au" placeholder="API Link (sonu =)" style="padding:10px; background:#000; color:white; border:1px solid #333; width:45%;">
-        <button onclick="save()" style="padding:10px 20px; background:#0095f6; color:white; border:none; border-radius:5px; cursor:pointer;">EKLE</button>
-        <div id="list" style="margin-top:20px;">
-            {% for name in apis %}<div style="background:#0a0a0a; padding:12px; margin-bottom:8px; border-radius:8px; border-left:4px solid #0095f6; display:flex; justify-content:space-between;">
-            <span>✅ {{ name }}</span><button onclick="del('{{name}}')" style="background:red; color:white; border:none; border-radius:4px; padding:5px;">SİL</button></div>{% endfor %}
+        <div style="background:#1a1a1a; padding:15px; border-radius:12px; margin-bottom:20px;">
+            <input type="text" id="an" placeholder="Sorgu Adı" style="padding:10px; background:#000; color:white; border:1px solid #333; width:35%; border-radius:5px;">
+            <input type="text" id="au" placeholder="API Link (Sonu =)" style="padding:10px; background:#000; color:white; border:1px solid #333; width:40%; border-radius:5px;">
+            <button onclick="save()" style="padding:10px; background:#0095f6; color:white; border:none; border-radius:5px; cursor:pointer;">EKLE</button>
         </div>
-        <br><a href="/site" target="_blank" style="display:block; text-align:center; background:#31b545; color:white; padding:15px; text-decoration:none; border-radius:10px; font-weight:bold;">SİTEYİ AÇ</a>
+        <div id="list">
+            {% for name in apis %}
+                <div style="display:flex; justify-content:space-between; background:#0a0a0a; padding:12px; margin-bottom:8px; border-radius:8px; border-left:4px solid #0095f6;">
+                    <span>✅ {{ name }}</span>
+                    <button onclick="del('{{name}}')" style="background:red; color:white; border:none; border-radius:4px; cursor:pointer; padding:5px 10px;">SİL</button>
+                </div>
+            {% endfor %}
+        </div>
+        <br><a href="/site" target="_blank" style="display:block; text-align:center; background:#34c759; color:white; padding:15px; text-decoration:none; border-radius:10px; font-weight:bold;">🌐 SORGULAMA SİTESİNİ AÇ</a>
     </div>
     <script>
     function save(){let n=document.getElementById('an').value;let u=document.getElementById('au').value;if(n&&u)fetch('/add_api?name='+n+'&url='+btoa(u)).then(()=>location.reload());}
@@ -52,46 +51,36 @@ HTML_SITE = """
 <html lang="tr">
 <head>
     <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nabi Verified</title>
+    <title>Sorgu Merkezi</title>
     <style>
-        :root { --blue: #0095f6; --bg: #000; }
-        body { margin:0; background: var(--bg); color:white; font-family:-apple-system,sans-serif; }
-        .h-btn { position:fixed; top:20px; left:50%; transform:translateX(-50%); z-index:100; background:rgba(255,255,255,0.1); padding:10px 25px; border-radius:30px; cursor:pointer; backdrop-filter:blur(10px); font-weight:bold; }
-        .overlay { position:fixed; top:-100%; left:0; width:100%; height:100%; background:rgba(0,0,0,0.95); z-index:99; transition:0.4s; display:flex; flex-direction:column; align-items:center; justify-content:center; }
-        .overlay.active { top:0; }
-        .main { height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:20px; }
-        input { width:100%; max-width:400px; padding:16px; border-radius:12px; border:1px solid #333; background:#0a0a0a; color:white; margin-bottom:10px; }
-        .btn { width:100%; max-width:400px; padding:16px; border-radius:12px; border:none; background:var(--blue); color:white; font-weight:bold; cursor:pointer; }
-        #res { margin-top:20px; width:100%; max-width:400px; background:#0a0a0a; padding:15px; border-radius:12px; color:#4ade80; display:none; border:1px solid #222; white-space:pre-wrap; font-family:monospace; font-size:13px; text-align:left; }
+        body { background:#000; color:white; font-family:sans-serif; margin:0; display:flex; align-items:center; justify-content:center; height:100vh; }
+        .box { width:90%; max-width:400px; text-align:center; }
+        .tik { display:inline-block; width:18px; height:18px; background:url('https://upload.wikimedia.org/wikipedia/commons/e/e4/Twitter_Verified_Badge.svg') no-repeat center; background-size:contain; margin-left:5px; vertical-align:middle; }
+        select, input, button { width:100%; padding:15px; border-radius:12px; border:1px solid #333; background:#111; color:white; margin-bottom:10px; box-sizing:border-box; font-size:16px; }
+        button { background:#0095f6; border:none; font-weight:bold; cursor:pointer; }
+        #res { margin-top:20px; background:#0a0a0a; padding:15px; border-radius:12px; text-align:left; display:none; white-space:pre-wrap; font-family:monospace; font-size:13px; border:1px solid #222; color:#4ade80; max-height:250px; overflow-y:auto; }
     </style>
 </head>
 <body>
-    <div class="h-btn" onclick="tgl()">☰ SORGULARI GÖR</div>
-    <div class="overlay" id="menu">
-        <h2 style="color:var(--blue)">Sorgu Seçin</h2>
-        {% for name in apis %}<div style="font-size:22px; margin:12px; cursor:pointer; font-weight:bold;" onclick="sel('{{name}}')">📍 {{name}}</div>{% endfor %}
-        <div onclick="tgl()" style="margin-top:30px; color:gray; cursor:pointer;">KAPAT</div>
-    </div>
-    <div class="main">
-        <h2 id="sname" style="color:var(--blue)">Nabi Hızlı Sorgu</h2>
-        <div id="form" style="display:none; width:100%; max-width:400px;">
-            <input type="text" id="target" placeholder="Veri giriniz...">
-            <button class="btn" onclick="sorgu()">HIZLI SORGULA</button>
-            <div id="res"></div>
-        </div>
+    <div class="box">
+        <h1>Nabi Verified<span class="tik"></span></h1>
+        <select id="api_select">{% for name in apis %}<option value="{{name}}">{{name}}</option>{% endfor %}</select>
+        <input type="text" id="target" placeholder="Sorgulanacak veriyi girin...">
+        <button onclick="sorgula()">HIZLI SORGULA</button>
+        <div id="res"></div>
     </div>
     <script>
-    let cur = "";
-    function tgl(){document.getElementById('menu').classList.toggle('active');}
-    function sel(n){cur=n; document.getElementById('form').style.display='block'; document.getElementById('sname').innerText=n; tgl();}
-    async function sorgu(){
-        const v=document.getElementById('target').value; const r=document.getElementById('res');
-        if(!v) return; r.style.display="block"; r.innerText="⚡ Sorgulanıyor...";
+    async function sorgula() {
+        const api = document.getElementById('api_select').value;
+        const val = document.getElementById('target').value;
+        const resDiv = document.getElementById('res');
+        if(!val) return;
+        resDiv.style.display = "block"; resDiv.innerText = "⚡ Sorgulanıyor...";
         try {
-            const res=await fetch('/do_web_sorgu?name='+cur+'&val='+v);
-            const data=await res.json();
-            r.innerText = typeof data.result === 'object' ? JSON.stringify(data.result, null, 2) : data.result;
-        } catch { r.innerText="❌ Hata oluştu!"; }
+            const r = await fetch('/do_sorgu?name='+api+'&val='+val);
+            const data = await r.json();
+            resDiv.innerText = typeof data.result === 'object' ? JSON.stringify(data.result, null, 2) : data.result;
+        } catch { resDiv.innerText = "❌ Hata oluştu!"; }
     }
     </script>
 </body>
@@ -101,7 +90,7 @@ HTML_SITE = """
 @web_app.route('/')
 def home():
     if not session.get('logged_in'):
-        return render_template_string('<body style="background:#000;color:white;text-align:center;padding-top:100px;"><h2>🔐 Giriş</h2><form method="POST" action="/login"><input type="password" name="s" style="padding:10px;"><br><br><button>GİRİŞ</button></form></body>')
+        return render_template_string('<body style="background:#000;color:white;text-align:center;padding-top:100px;"><h2>🔐 Giriş</h2><form method="POST" action="/login"><input type="password" name="s"><br><br><button>GİRİŞ</button></form></body>')
     return redirect(url_for('admin'))
 
 @web_app.route('/login', methods=['POST'])
@@ -109,7 +98,7 @@ def login():
     if request.form.get('s') == SISTEM["panel_sifre"]:
         session['logged_in'] = True
         return redirect(url_for('admin'))
-    return "Hata!"
+    return "Hatalı Şifre!"
 
 @web_app.route('/admin')
 def admin():
@@ -132,33 +121,21 @@ def del_api():
     if n in SISTEM["apis"]: del SISTEM["apis"][n]
     return jsonify({"status":"ok"})
 
-@web_app.route('/do_web_sorgu')
-async def do_web_sorgu():
+@web_app.route('/do_sorgu')
+def do_sorgu():
     name=request.args.get('name'); val=request.args.get('val')
     api_url = SISTEM["apis"].get(name)
-    if not api_url: return jsonify({"result": "API Yok!"})
+    if not api_url: return jsonify({"result": "API Tanımsız!"})
     try:
-        r = await global_client.get(api_url + val)
-        try:
-            # JSON ÇIKTISI ZORLA VE REKLAMLARI SİL
-            json_data = r.json()
-            clean_json = json.loads(veri_temizle(json.dumps(json_data)))
-            return jsonify({"result": clean_json})
-        except:
-            return jsonify({"result": veri_temizle(r.text)})
+        with httpx.Client(timeout=30.0, follow_redirects=True) as client:
+            r = client.get(api_url + val)
+            temiz_veri = temizle(r.text)
+            try:
+                return jsonify({"result": json.loads(temiz_veri)})
+            except:
+                return jsonify({"result": temiz_veri})
     except Exception as e:
-        return jsonify({"result": f"Hata: {str(e)}"})
-
-async def bot_start():
-    try:
-        app = ApplicationBuilder().token(SISTEM["ana_token"]).build()
-        await app.initialize(); await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-    except: pass
+        return jsonify({"result": f"Bağlantı Hatası: {str(e)}"})
 
 if __name__ == "__main__":
-    # Render hatasını (Exited early) çözmek için Thread yapısı düzeltildi.
-    t = threading.Thread(target=lambda: asyncio.run(bot_start()))
-    t.daemon = True
-    t.start()
     web_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))

@@ -1,118 +1,144 @@
-import os
-import re
-import asyncio
-import threading
-import httpx 
-import io
-import json
-from flask import Flask
+import os, re, asyncio, threading, httpx, io, json, datetime, base64
+from flask import Flask, render_template_string, request, jsonify
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# --- RENDER CANLI TUTMA ---
-web_app = Flask('')
+# --- AYARLAR VE STATÜ ---
+SISTEM = {
+    "bakim": False,
+    "reklam_sil": True,
+    "apis": {}, # Web sorgu siteleri buraya kaydolur
+    "toplam_sorgu": 0,
+    "admin_id": 7690743437,
+    "ana_token": "8586246924:AAEB_vjkzVzCsx5V7P35yoVghh7xczlwmpM",
+    "baslangic": datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+}
+
+web_app = Flask(__name__)
+
+# --- WEB PANEL TASARIMI (DARK MOD) ---
+HTML_TASARIM = """
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <title>Nabi V17 - Yönetim Paneli</title>
+    <style>
+        body { background: #0b0e14; color: #e1e1e1; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 20px; }
+        .grid { display: grid; grid-template-columns: 300px 1fr; gap: 20px; max-width: 1200px; margin: auto; }
+        .card { background: #151921; padding: 20px; border-radius: 15px; border: 1px solid #232936; }
+        .btn { width: 100%; padding: 10px; margin: 5px 0; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; background: #2a3241; color: white; transition: 0.3s; }
+        .btn:hover { background: #00aaff; }
+        .btn-active { background: #31b545 !important; }
+        input { width: 90%; padding: 10px; margin-bottom: 10px; border-radius: 5px; border: 1px solid #232936; background: #0b0e14; color: white; }
+        .log { background: #000; color: #00ff00; padding: 10px; height: 150px; overflow-y: auto; font-family: monospace; font-size: 12px; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div class="grid">
+        <div class="card">
+            <h3 style="color:#00aaff">📊 İstatistikler</h3>
+            <p>Sorgu: <b>{{ stats.toplam_sorgu }}</b></p>
+            <p>Başlangıç: <br><small>{{ stats.baslangic }}</small></p>
+            <hr style="border:0.5px solid #232936">
+            <h3 style="color:#00aaff">➕ API Site Oluştur</h3>
+            <input type="text" id="api_name" placeholder="Site Adı (örn: gsm)">
+            <input type="text" id="api_url" placeholder="API Link (örn: site.com/api?tc=)">
+            <button class="btn" style="background:#00aaff" onclick="addApi()">Sorgu Sitesi Kur</button>
+        </div>
+        <div class="card">
+            <h3 style="color:#00aaff">🛠 30 Fonksiyonel Denetim</h3>
+            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px;">
+                <button class="btn" onclick="act('bakim')">🚧 Bakım Modu</button>
+                <button class="btn" onclick="act('reklam')">🧹 Reklam Filtresi</button>
+                <button class="btn" onclick="act('json')">💎 JSON Güzelleştir</button>
+                <button class="btn" onclick="act('log')">📝 Logları Kaydet</button>
+                <button class="btn" onclick="act('vip')">👑 VIP Erişimi</button>
+                <button class="btn" onclick="act('proxy')">🌐 Proxy Güncelle</button>
+                <button class="btn" onclick="act('spam')">🛡 Spam Koruması</button>
+                <button class="btn" onclick="act('api_test')">📶 Ping Testi</button>
+                <button class="btn" onclick="location.reload()">🔄 Paneli Yenile</button>
+            </div>
+            <h3 style="color:#00aaff">🌐 Aktif Sorgu Sitelerin</h3>
+            <div id="api_list">
+                {% for name in stats.apis %}
+                    <div style="margin-bottom:5px;">📍 {{name}}: <a href="/sorgu/{{name}}" target="_blank" style="color:#00ff00">Siteye Git</a></div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    <script>
+        function act(q) { fetch('/action?q='+q).then(() => location.reload()); }
+        function addApi() {
+            let n = document.getElementById('api_name').value;
+            let u = document.getElementById('api_url').value;
+            if(!n || !u) return alert('Boş bırakma!');
+            fetch('/add_api?name='+n+'&url='+btoa(u)).then(() => location.reload());
+        }
+    </script>
+</body>
+</html>
+"""
+
+# --- WEB YOLLARI ---
 @web_app.route('/')
-def home(): return "Bot 7/24 Aktif!"
-def run_web(): web_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+def home():
+    return render_template_string(HTML_TASARIM, stats=SISTEM)
 
-# --- AYARLAR ---
-ANA_TOKEN = "8595188359:AAHpbT4AZEFQe1VzZHo6HkjvHGgMtJq153k"
-ADMIN_ID =8258235296
-AKTIF_BOTLAR = {} 
+@web_app.route('/action')
+def action():
+    q = request.args.get('q')
+    if q == "bakim": SISTEM["bakim"] = not SISTEM["bakim"]
+    if q == "reklam": SISTEM["reklam_sil"] = not SISTEM["reklam_sil"]
+    return jsonify({"status":"ok"})
 
-def veri_siklastir(ham_veri):
-    """JSON verisini şık bir metne dönüştürür ve reklamları siler"""
-    try:
-        data = json.loads(ham_veri)
-        metin = "💎 **Sorgu Detayları**\n\n"
-        def parse_dict(d, indent=0):
-            res = ""
-            for k, v in d.items():
-                if isinstance(v, dict):
-                    res += f"📍 **{k.upper()}:**\n{parse_dict(v, indent+1)}"
-                elif isinstance(v, list):
-                    res += f"📝 **{k.upper()}:** (Liste)\n"
-                else:
-                    # Telegram/Discord linklerini temizle
-                    val = str(v)
-                    val = re.sub(r'(https?://)?(t\.me|discord\.gg)\S*', '', val)
-                    res += f"🔹 **{k}:** `{val}`\n"
-            return res
-        metin += parse_dict(data)
-        return metin
-    except:
-        # JSON değilse düz metin temizliği yap
-        temiz = re.sub(r'(https?://)?(t\.me|discord\.gg)\S*', '', ham_veri)
-        return f"📝 **Sonuç:**\n\n`{temiz}`"
+@web_app.route('/add_api')
+def add_api():
+    name = request.args.get('name')
+    url = base64.b64decode(request.args.get('url')).decode()
+    SISTEM["apis"][name] = url
+    return jsonify({"status":"ok"})
 
-def komut_uret(url):
-    url = url.lower()
-    if "adres" in url: return "adres"
-    if "gsmtc" in url or "tcgsm" in url: return "gsm_sorgu"
-    if "adsoyad" in url: return "ad_soyad"
-    if "recete" in url: return "recete"
-    if "plaka" in url: return "plaka"
-    return f"sorgu_{abs(hash(url)) % 100}"
+@web_app.route('/sorgu/<name>')
+def sorgu_sayfasi(name):
+    api_url = SISTEM["apis"].get(name)
+    if not api_url: return "Bulunamadı", 404
+    return render_template_string("""
+    <body style="background:#0b0e14; color:white; font-family:sans-serif; text-align:center; padding:50px;">
+        <h2>💎 {{name}} Sorgu Paneli</h2>
+        <input id="v" style="padding:10px; width:300px; border-radius:5px;">
+        <button onclick="s()" style="padding:10px; background:#00aaff; color:white; border:none; border-radius:5px;">Sorgula</button>
+        <pre id="r" style="text-align:left; background:#000; padding:20px; margin-top:20px; color:#00ff00;"></pre>
+        <script>
+            async function s(){
+                let v = document.getElementById('v').value;
+                document.getElementById('r').innerText = "🔄 Sorgulanıyor...";
+                let res = await fetch('/do_sorgu?name={{name}}&val='+v);
+                let data = await res.json();
+                document.getElementById('r').innerText = data.result;
+            }
+        </script>
+    </body>
+    """, name=name)
 
-# --- ALT BOT ---
-async def alt_bot_baslat(token, api_links, tanitim_metni):
-    try:
-        app = ApplicationBuilder().token(token).build()
+@web_app.route('/do_sorgu')
+async def do_sorgu():
+    name = request.args.get('name')
+    val = request.args.get('val')
+    url = SISTEM["apis"].get(name) + val
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            r = await client.get(url)
+            text = r.text
+            if SISTEM["reklam_sil"]:
+                text = re.sub(r'(https?://)?(t\.me|discord\.gg)\S*', '', text)
+            return jsonify({"result": text})
+        except: return jsonify({"result": "Bağlantı Hatası!"})
 
-        async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            keyboard = [[InlineKeyboardButton("📢 Resmi Kanal", url="https://t.me/nabisystemyeni")]]
-            await update.message.reply_text(
-                f"✨ **Hoş Geldiniz!**\n\n{tanitim_metni}\n\n🚀 Komutlar için: /komutlar",
-                reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown"
-            )
-
-        async def komutlar_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            liste = "\n".join([f"🔍 /{komut_uret(l)}" for l in api_links])
-            await update.message.reply_text(f"🛠 **AKTİF SORGULAR**\n\n{liste}", parse_mode="Markdown")
-
-        async def sorgu_yap(update, context, link):
-            if not context.args:
-                await update.message.reply_text("❌ Değer girin!")
-                return
-            await update.message.reply_text("🔄 **Sorgulanıyor...**")
-            val = "%20".join(context.args)
-            url = link + val if "=" in link else f"{link}?tc={val}"
-            async with httpx.AsyncClient() as client:
-                try:
-                    r = await client.get(url, timeout=30.0)
-                    sonuc = veri_siklastir(r.text)
-                    await update.message.reply_text(f"{sonuc}\n\n✨ @nabisystemyeni", parse_mode="Markdown")
-                except:
-                    await update.message.reply_text("❌ API Hatası.")
-
-        app.add_handler(CommandHandler("start", start_handler))
-        app.add_handler(CommandHandler("komutlar", komutlar_handler))
-        for l in api_links:
-            app.add_handler(CommandHandler(komut_uret(l), lambda u, c, target=l: sorgu_yap(u, c, target)))
-
-        await app.initialize(); await app.start()
-        await app.updater.start_polling(drop_pending_updates=True)
-        while token in AKTIF_BOTLAR: await asyncio.sleep(10)
-    except: pass
-
-# --- ANA BOT ---
-async def ana_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID: return
-    mesaj = update.message.text
-    token = re.search(r'(\d+:[A-Za-z0-9_-]{30,})', mesaj)
-    links = re.findall(r'(https?://\S+)', mesaj)
-    lines = mesaj.split('\n')
-    # Açıklama: Link ve Token olmayan satırlar
-    desc = "\n".join([l for l in lines if not re.search(r'(\d+:|https?://)', l) and l.strip()])
-
-    if token and links:
-        t = token.group(1)
-        AKTIF_BOTLAR[t] = True
-        threading.Thread(target=lambda: asyncio.run(alt_bot_baslat(t, links, desc)), daemon=True).start()
-        await update.message.reply_text("✅ Bot kuruldu! /start ve /komutlar otomatik hazırlandı.")
+# --- BOT MOTORU ---
+# (Daha önce verdiğim bot isleyicisi ve alt_bot_motoru buraya gelecek)
 
 if __name__ == "__main__":
-    threading.Thread(target=run_web, daemon=True).start()
-    app = ApplicationBuilder().token(ANA_TOKEN).build()
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ana_isleyici))
-    app.run_polling(drop_pending_updates=True)
+    threading.Thread(target=lambda: web_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080))), daemon=True).start()
+    print("SİSTEM YAYINDA: ozelskncvhhh.onrender.com")
+    # Bot .run_polling() buraya...

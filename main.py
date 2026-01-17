@@ -17,7 +17,7 @@ def run_web(): web_app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 8080)
 
 # --- AYARLAR ---
 ANA_TOKEN = "8595188359:AAHpbT4AZEFQe1VzZHo6HkjvHGgMtJq153k"
-ADMIN_ID = 7690743437
+ADMIN_ID =8258235296
 AKTIF_BOTLAR = {} 
 
 def veri_siklastir(ham_veri):

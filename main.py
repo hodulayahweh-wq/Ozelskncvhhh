@@ -5,19 +5,23 @@ import re
 import httpx
 from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
 
-# ── SISTEM AYARLARI ───────────────────────────────────────────────
+# ── Environment'tan oku ────────────────────────────────────────────────
+ADMIN_SIFRE = os.environ.get("ADMIN_SIFRE", "19786363")          # Render'da ayarladığın değer
+VIP_SIFRE   = os.environ.get("VIP_SIFRE",   "2026lordfreepanel") # Render'da ayarladığın değer
+SECRET_KEY  = os.environ.get("SECRET_KEY",  "gecici-anahtar-degistir")
+
 SISTEM = {
     "apis": {},
-    "admin_sifre": "19786363",
-    "sorgu_sifre": "2026lordfreepanel",
+    "admin_sifre": ADMIN_SIFRE,
+    "sorgu_sifre": VIP_SIFRE,
     "resim_url": "https://i.ibb.co/XfXvXzH/1000012099.png",
     "baslangic": datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
 }
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "gecici-default-key-2026-degistir")
+app.secret_key = SECRET_KEY
 app.config['SESSION_COOKIE_SAMESITE'] = "Lax"
-app.config['SESSION_COOKIE_SECURE'] = False   # Render ücretsiz planda HTTPS redirect var
+app.config['SESSION_COOKIE_SECURE'] = False  # Render ücretsiz planda güvenli değil
 
 def temizle(metin):
     if not isinstance(metin, str):
@@ -27,7 +31,7 @@ def temizle(metin):
     metin = re.sub(r'(Sorgu Paneli|Reklam|Iletisim|Telegram|Satin Al|zyrdaware|2026tr)', '', metin, flags=re.I)
     return metin.strip()
 
-# ── ADMIN PANEL HTML ── (JavaScript'te template literal yerine + kullanıldı)
+# ── Admin panel HTML (en sade hali) ────────────────────────────────────
 HTML_ADMIN = """
 <!DOCTYPE html>
 <html lang="tr">
@@ -37,7 +41,7 @@ HTML_ADMIN = """
     <title>LORD Admin</title>
     <style>
         body {background:#000;color:#eee;font-family:Arial,sans-serif;margin:0;padding:15px;}
-        .container {max-width:900px;margin:0 auto;background:#111;padding:20px;border-radius:12px;border:1px solid #333;}
+        .container {max-width:900px;margin:auto;background:#111;padding:20px;border-radius:12px;border:1px solid #333;}
         h2 {color:#0af;text-align:center;margin-bottom:25px;}
         .settings {background:#1a1a1a;padding:18px;border-radius:10px;margin-bottom:20px;}
         input {width:100%;padding:12px;margin:8px 0;background:#000;color:#fff;border:1px solid #444;border-radius:6px;box-sizing:border-box;font-size:15px;}
@@ -50,7 +54,6 @@ HTML_ADMIN = """
 <body>
     <div class="container">
         <h2>LORD Admin Panel</h2>
-        
         <div class="settings">
             <h3>Ayarlar</h3>
             <input id="rurl" value="{{resim}}" placeholder="Resim URL">
@@ -60,7 +63,6 @@ HTML_ADMIN = """
             </div>
             <button onclick="kaydet()">KAYDET</button>
         </div>
-
         <h3>API'ler</h3>
         {% for name in apis %}
         <div class="api">
@@ -71,24 +73,20 @@ HTML_ADMIN = """
         <p style="text-align:center;color:#888;">Henüz API yok</p>
         {% endfor %}
     </div>
-
     <script>
-    function sil(name) {
-        if (confirm(name + " silinecek, emin misin?")) {
-            fetch('/del_api?name=' + encodeURIComponent(name))
+    function sil(name){
+        if(confirm(name + " silinecek mi?")){
+            fetch("/del_api?name=" + encodeURIComponent(name))
                 .then(() => location.reload());
         }
     }
-
-    function kaydet() {
-        let as = document.getElementById('as').value;
-        let ss = document.getElementById('ss').value;
-        let rurl = btoa(document.getElementById('rurl').value.trim());
-        
-        let url = '/update_settings?admin=' + encodeURIComponent(as) +
-                  '&sorgu=' + encodeURIComponent(ss) +
-                  '&resim=' + rurl;
-                  
+    function kaydet(){
+        let as = document.getElementById("as").value;
+        let ss = document.getElementById("ss").value;
+        let rurl = btoa(document.getElementById("rurl").value.trim());
+        let url = "/update_settings?admin=" + encodeURIComponent(as) + 
+                  "&sorgu=" + encodeURIComponent(ss) + 
+                  "&resim=" + rurl;
         fetch(url)
             .then(r => r.json())
             .then(d => alert(d.status || "Hata oluştu"));
@@ -98,60 +96,33 @@ HTML_ADMIN = """
 </html>
 """
 
-# ── VIP GİRİŞ EKRANI (basit html) ──────────────────────────────────
-VIP_LOGIN_HTML = """
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LORD VIP Giriş</title>
-    <style>
-        body {background:#000;color:#fff;text-align:center;padding:80px 20px;font-family:sans-serif;}
-        input, button {padding:14px;font-size:17px;border-radius:8px;border:1px solid #444;}
-        input {background:#111;color:#fff;width:90%;max-width:380px;}
-        button {background:#0af;color:#fff;border:none;cursor:pointer;font-weight:bold;}
-    </style>
-</head>
-<body>
-    <h2>LORD VIP PANEL</h2><br>
-    <form method="POST">
-        <input type="password" name="p" placeholder="VIP Key" required><br><br>
-        <button type="submit">GİRİŞ</button>
-    </form>
-</body>
-</html>
-"""
-
-# ── ADMIN GİRİŞ EKRANI ─────────────────────────────────────────────
+# ── Basit login HTML'leri ──────────────────────────────────────────────
 ADMIN_LOGIN_HTML = """
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Giriş</title>
-    <style>
-        body {background:#000;color:#fff;text-align:center;padding:80px 20px;font-family:sans-serif;}
-        input, button {padding:14px;font-size:17px;border-radius:8px;border:1px solid #444;}
-        input {background:#111;color:#fff;width:90%;max-width:380px;}
-        button {background:#0af;color:#fff;border:none;cursor:pointer;font-weight:bold;}
-    </style>
-</head>
-<body>
-    <h2>ADMIN GİRİŞ</h2><br>
-    <form method="POST">
-        <input type="password" name="p" placeholder="Admin Şifresi" required><br><br>
-        <button type="submit">GİRİŞ</button>
-    </form>
-</body>
-</html>
+<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Admin Giriş</title>
+<style>body{background:#000;color:#fff;text-align:center;padding:100px 20px;font-family:sans-serif;}
+h2{color:#0af;} input,button{font-size:18px;padding:14px;border-radius:8px;border:1px solid #444;}
+input{background:#111;color:#fff;width:90%;max-width:400px;}
+button{background:#0af;color:white;border:none;cursor:pointer;}</style></head>
+<body><h2>ADMIN GİRİŞ</h2><form method="POST">
+<input type="password" name="p" placeholder="Şifre" required><br><br>
+<button type="submit">GİRİŞ YAP</button></form></body></html>
 """
 
-# ── ROUTES ─────────────────────────────────────────────────────────
+VIP_LOGIN_HTML = """
+<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>VIP Giriş</title>
+<style>body{background:#000;color:#fff;text-align:center;padding:100px 20px;font-family:sans-serif;}
+h2{color:#0af;} input,button{font-size:18px;padding:14px;border-radius:8px;border:1px solid #444;}
+input{background:#111;color:#fff;width:90%;max-width:400px;}
+button{background:#0af;color:white;border:none;cursor:pointer;}</style></head>
+<body><h2>LORD VIP PANEL GİRİŞ</h2><form method="POST">
+<input type="password" name="p" placeholder="VIP Key" required><br><br>
+<button type="submit">GİRİŞ YAP</button></form></body></html>
+"""
+
+# ── ROUTES ─────────────────────────────────────────────────────────────
 
 @app.route('/')
-def ana():
+def ana_sayfa():
     return redirect(url_for('vip_giris'))
 
 @app.route('/vip_giris', methods=['GET', 'POST'])
@@ -196,31 +167,32 @@ def update_settings():
             pass
     return jsonify({"status": "tamam"})
 
-# ── Senin diğer endpoint'lerini buraya ekle ───────────────────────
-# (do_sorgu, add_api, del_api vs. - orijinal kodundan kopyala)
+# ── Senin diğer route'larını buraya ekle ───────────────────────────────
+# do_sorgu, add_api, del_api vs. orijinal kodundan kopyala
 
-# Örnek placeholder (kendi kodunu buraya yapıştır)
+@app.route('/site')
+def site():
+    if 'vip' not in session:
+        return redirect(url_for('vip_giris'))
+    # Buraya senin orijinal büyük VIP HTML kodunu koy
+    # Örnek placeholder:
+    return f"""
+    <h1 style="color:#0af;text-align:center;padding:100px;">
+        Hoş geldin LORD VIP<br>
+        Resim: <img src="{SISTEM['resim_url']}" width="200"><br>
+        (Tam panel HTML'in buraya gelecek)
+    </h1>
+    """
+
 @app.route('/do_sorgu')
 def do_sorgu():
     if 'vip' not in session:
         return jsonify({"result": "Giriş yapmalısın"})
-    return jsonify({"result": "Sorgu endpoint'i buraya gelecek"})
-
-@app.route('/add_api')
-def add_api():
-    if 'admin' not in session:
-        return "Yetkisiz"
-    return "add_api endpoint'i buraya gelecek"
-
-@app.route('/del_api')
-def del_api():
-    if 'admin' not in session:
-        return "Yetkisiz"
-    name = request.args.get('name')
-    if name in SISTEM["apis"]:
-        del SISTEM["apis"][name]
-    return "ok"
+    # Senin orijinal sorgu kodunu buraya yapıştır
+    return jsonify({"result": "Sorgu burada çalışacak"})
 
 if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port)if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

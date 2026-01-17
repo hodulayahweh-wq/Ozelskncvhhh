@@ -2,23 +2,23 @@ import os
 import re
 import asyncio
 import threading
-import httpx # Render için daha hızlı ve asenkron
-from telegram import Update, InputFile
+import httpx 
+from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import io
 
 # --- AYARLAR ---
+# Buraya Kendi Ana Bot Tokenini Yaz
 ANA_TOKEN = "8231219914:AAH8H0IQRc4mNHJe0Wth5GM5vx1WBv-8VAs"
 
-# Verideki Telegram reklamlarını temizleyen fonksiyon
-def temizle(metin):
-    # t.me linklerini, @kullanıcı adlarını ve reklamları siler
+# Verideki Telegram reklamlarını ve linklerini siler
+def veri_temizle(metin):
     metin = re.sub(r'(https?://)?t\.me/\S+', '', metin)
     metin = re.sub(r'@[A-Za-z0-9_]+', '', metin)
-    metin = metin.replace("Telegram", "").replace("Kanalımıza katılın", "")
     return metin.strip()
 
-def get_cmd_name(url):
+# Linkten komut ismi üretir
+def komut_yap(url):
     url = url.lower()
     if "adres" in url: return "tc_adres"
     if "gsmtc" in url: return "gsm_tc"
@@ -26,77 +26,89 @@ def get_cmd_name(url):
     if "tcgsm" in url: return "tc_gsm"
     if "recete" in url: return "recete"
     if "bakiye" in url: return "bakiye"
+    if "borc" in url: return "borc_sorgu"
     return f"sorgu_{abs(hash(url)) % 100}"
 
-# --- ALT BOT ÇALIŞMA SİSTEMİ ---
-async def start_sub_bot(token, api_links):
+# --- ALT BOTUN ÇALIŞMASI ---
+async def alt_bot_baslat(token, api_linkleri):
     try:
         app = ApplicationBuilder().token(token).build()
 
-        async def sub_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            await update.message.reply_text("👋 Bu bot özel sorgu apilerine bağlıdır.\nKomutlar: " + ", ".join([f"/{get_cmd_name(l)}" for l in api_links]))
+        # ALT BOT İÇİN /START KOMUTU (Komutları Otomatik Listeler)
+        async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+            komutlar = "\n".join([f"🔹 /{komut_yap(l)}" for l in api_linkleri])
+            await update.message.reply_text(
+                f"✅ **Botunuz Sorgu Sistemine Bağlandı!**\n\n"
+                f"Aşağıdaki komutları kullanarak sorgu yapabilirsiniz:\n\n{komutlar}\n\n"
+                f"👉 Örnek kullanım: `/{komut_yap(api_linkleri[0])} 11111111111`",
+                parse_mode="Markdown"
+            )
 
-        async def sorgu_yapici(update: Update, context: ContextTypes.DEFAULT_TYPE, base_url: str):
+        # Sorgu komutlarının ana motoru
+        async def sorgula(update: Update, context: ContextTypes.DEFAULT_TYPE, link: str):
             if not context.args:
-                await update.message.reply_text("❌ Sorgulanacak değeri girin!")
+                await update.message.reply_text(f"❌ Sorgu için değer girin!\nÖrnek: `/{context.invoked_with} 123456789`", parse_mode="Markdown")
                 return
             
-            val = "%20".join(context.args)
-            # URL Hazırlama
-            clean_url = re.sub(r'=[Xx0-9]+', '=', base_url)
-            if "=" not in clean_url: clean_url += "?tc=" if "?" not in clean_url else "&tc="
-            target = f"{clean_url}{val}"
-
-            await update.message.reply_text("⏳ Veri getiriliyor...")
-
+            deger = "%20".join(context.args)
+            # Linki hazırla
+            url = link + deger if "=" in link else f"{link}?tc={deger}"
+            
+            await update.message.reply_text("⏳ Veri kaynağından sorgulanıyor...")
+            
             async with httpx.AsyncClient() as client:
                 try:
-                    r = await client.get(target, timeout=20.0)
-                    raw_data = r.text
-                    # Reklam Temizliği
-                    temiz_veri = temizle(raw_data)
-
-                    if len(temiz_veri) > 600:
-                        # Veri çok uzunsa TXT olarak gönder
-                        out = io.BytesIO(temiz_veri.encode('utf-8'))
-                        out.name = "sonuc.txt"
-                        await update.message.reply_document(document=out, caption="✅ Veri yoğunluğu nedeniyle dosya olarak gönderildi.")
+                    r = await client.get(url, timeout=20.0)
+                    temiz_sonuc = veri_temizle(r.text)
+                    
+                    if len(temiz_sonuc) > 800:
+                        file = io.BytesIO(temiz_sonuc.encode())
+                        file.name = f"{deger}_sonuc.txt"
+                        await update.message.reply_document(document=file, caption="📄 Veri uzun olduğu için dosya yapıldı.")
                     else:
-                        await update.message.reply_text(f"✅ **Sonuç:**\n\n`{temiz_veri}`", parse_mode="Markdown")
+                        await update.message.reply_text(f"📝 **Sorgu Sonucu:**\n\n`{temiz_sonuc}`", parse_mode="Markdown")
                 except:
-                    await update.message.reply_text("❌ API sunucusu yanıt vermedi.")
+                    await update.message.reply_text("❌ API sunucusu yanıt vermedi veya link hatalı.")
 
-        app.add_handler(CommandHandler("start", sub_start))
-        for link in api_links:
-            app.add_handler(CommandHandler(get_cmd_name(link), lambda u, c, l=link: sorgu_yapici(u, c, l)))
+        # Komutları bota tanımla
+        app.add_handler(CommandHandler("start", start_cmd))
+        for l in api_linkleri:
+            # Her API linki için ayrı bir komut oluşturur
+            cmd = komut_yap(l)
+            app.add_handler(CommandHandler(cmd, lambda u, c, link=l: sorgula(u, c, link)))
 
         await app.initialize()
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
-        while True: await asyncio.sleep(3600)
+        while True: await asyncio.sleep(1000)
     except Exception as e:
-        print(f"Hata: {e}")
+        print(f"Alt Bot Hatası: {e}")
 
-def run_thread(token, links):
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(start_sub_bot(token, links))
-
-# --- ANA BOT ---
+# --- ANA BOT İŞLEMLERİ ---
 async def ana_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚀 Ana Sisteme Hoş Geldiniz.\nToken ve Linkleri gönderin.")
+    await update.message.reply_text(
+        "👋 **Ana Bot Kontrol Paneli**\n\n"
+        "Yeni bir bot başlatmak için Bot Tokeni ve API linklerini alt alta gönderin."
+    )
 
-async def handle_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    token = re.search(r'(\d+:[A-Za-z0-9_-]{30,})', text)
-    links = re.findall(r'(https?://\S+)', text)
+async def ana_mesaj(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mesaj = update.message.text
+    token_search = re.search(r'(\d+:[A-Za-z0-9_-]{30,})', mesaj)
+    linkler = re.findall(r'(https?://\S+)', mesaj)
 
-    if token and links:
-        threading.Thread(target=run_thread, args=(token.group(1), links), daemon=True).start()
-        await update.message.reply_text("✅ Bot aktif edildi. Telegram reklamları otomatik temizlenecek.")
+    if token_search and linkler:
+        token = token_search.group(1)
+        # Thread başlat
+        threading.Thread(target=lambda: asyncio.run(alt_bot_baslat(token, linkler)), daemon=True).start()
+        
+        komut_listesi = "\n".join([f"🔹 /{komut_yap(l)}" for l in linkler])
+        await update.message.reply_text(f"🚀 **Alt Bot Başarıyla Kuruldu!**\n\n**Aktif Komutlar:**\n{komut_listesi}\n\nDiğer botunuza gidip /start yazabilirsiniz.")
+    else:
+        await update.message.reply_text("❌ Hatalı format! Lütfen mesajda hem Bot Token hem de en az bir API linki olduğundan emin olun.")
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(ANA_TOKEN).build()
-    app.add_handler(CommandHandler("start", ana_start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_msg))
-    app.run_polling()
+    print("🤖 Sistem Render'da aktif edildi...")
+    ana_app = ApplicationBuilder().token(ANA_TOKEN).build()
+    ana_app.add_handler(CommandHandler("start", ana_start))
+    ana_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ana_mesaj))
+    ana_app.run_polling()

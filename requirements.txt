@@ -3,4 +3,3 @@ httpx[http2]
 flask
 gunicorn
 gevent
-uvicorn

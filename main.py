@@ -9,7 +9,7 @@ SECRET_KEY = "super-secret-lord-panel-2026"
 
 SISTEM = {
     "apis": {},
-    "admin_sifre": "19786363",
+    "admin_sifre": "gogle1",
     "sorgu_sifre": "2026lordfreepanel",
     "resim_url": "https://i.ibb.co/XfXvXzH/1000012099.png",
     "baslangic": datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -79,7 +79,7 @@ button{background:#0af;color:#fff;border:none}
 <body>
 <h2>ADMIN GİRİŞ</h2>
 <form method="POST">
-<input type="password" name="p" placeholder="Admin Şifre" required><br><br>
+<input type="password" name="p" placeholder="admin_sifre" required><br><br>
 <button>GİRİŞ</button>
 </form>
 </body></html>

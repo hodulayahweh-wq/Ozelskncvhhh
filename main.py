@@ -5,10 +5,10 @@ import re
 import httpx
 from flask import Flask, render_template_string, request, jsonify, session, redirect, url_for
 
-# ── Environment'tan oku ────────────────────────────────────────────────
-ADMIN_SIFRE = os.environ.get("ADMIN_SIFRE", "19786363")          # Render'da ayarladığın değer
-VIP_SIFRE   = os.environ.get("VIP_SIFRE",   "2026lordfreepanel") # Render'da ayarladığın değer
-SECRET_KEY  = os.environ.get("SECRET_KEY",  "gecici-anahtar-degistir")
+# Environment'tan güvenli okuma
+ADMIN_SIFRE = os.environ.get("ADMIN_SIFRE", "19786363")
+VIP_SIFRE   = os.environ.get("VIP_SIFRE",   "2026lordfreepanel")
+SECRET_KEY  = os.environ.get("SECRET_KEY",  "super-secret-lord-panel-2026-random-xyz")
 
 SISTEM = {
     "apis": {},
@@ -21,7 +21,7 @@ SISTEM = {
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 app.config['SESSION_COOKIE_SAMESITE'] = "Lax"
-app.config['SESSION_COOKIE_SECURE'] = False  # Render ücretsiz planda güvenli değil
+app.config['SESSION_COOKIE_SECURE'] = False
 
 def temizle(metin):
     if not isinstance(metin, str):
@@ -31,7 +31,7 @@ def temizle(metin):
     metin = re.sub(r'(Sorgu Paneli|Reklam|Iletisim|Telegram|Satin Al|zyrdaware|2026tr)', '', metin, flags=re.I)
     return metin.strip()
 
-# ── Admin panel HTML (en sade hali) ────────────────────────────────────
+# ── Admin paneli HTML ────────────────────────────────────────────────
 HTML_ADMIN = """
 <!DOCTYPE html>
 <html lang="tr">
@@ -84,8 +84,8 @@ HTML_ADMIN = """
         let as = document.getElementById("as").value;
         let ss = document.getElementById("ss").value;
         let rurl = btoa(document.getElementById("rurl").value.trim());
-        let url = "/update_settings?admin=" + encodeURIComponent(as) + 
-                  "&sorgu=" + encodeURIComponent(ss) + 
+        let url = "/update_settings?admin=" + encodeURIComponent(as) +
+                  "&sorgu=" + encodeURIComponent(ss) +
                   "&resim=" + rurl;
         fetch(url)
             .then(r => r.json())
@@ -96,7 +96,7 @@ HTML_ADMIN = """
 </html>
 """
 
-# ── Basit login HTML'leri ──────────────────────────────────────────────
+# Basit login sayfaları
 ADMIN_LOGIN_HTML = """
 <!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Admin Giriş</title>
 <style>body{background:#000;color:#fff;text-align:center;padding:100px 20px;font-family:sans-serif;}
@@ -118,8 +118,6 @@ button{background:#0af;color:white;border:none;cursor:pointer;}</style></head>
 <input type="password" name="p" placeholder="VIP Key" required><br><br>
 <button type="submit">GİRİŞ YAP</button></form></body></html>
 """
-
-# ── ROUTES ─────────────────────────────────────────────────────────────
 
 @app.route('/')
 def ana_sayfa():
@@ -167,32 +165,20 @@ def update_settings():
             pass
     return jsonify({"status": "tamam"})
 
-# ── Senin diğer route'larını buraya ekle ───────────────────────────────
-# do_sorgu, add_api, del_api vs. orijinal kodundan kopyala
-
+# ── VIP ana sayfa (senin orijinal büyük HTML'ini buraya koyabilirsin) ──
 @app.route('/site')
 def site():
     if 'vip' not in session:
         return redirect(url_for('vip_giris'))
-    # Buraya senin orijinal büyük VIP HTML kodunu koy
-    # Örnek placeholder:
+    # Placeholder – senin orijinal HTML'ini buraya render_template_string ile koy
     return f"""
-    <h1 style="color:#0af;text-align:center;padding:100px;">
+    <h1 style="color:#0af;text-align:center;padding:80px;">
         Hoş geldin LORD VIP<br>
-        Resim: <img src="{SISTEM['resim_url']}" width="200"><br>
-        (Tam panel HTML'in buraya gelecek)
+        <img src="{SISTEM['resim_url']}" width="200"><br>
+        (Buraya tam VIP panel HTML kodun gelecek)
     </h1>
     """
 
-@app.route('/do_sorgu')
-def do_sorgu():
-    if 'vip' not in session:
-        return jsonify({"result": "Giriş yapmalısın"})
-    # Senin orijinal sorgu kodunu buraya yapıştır
-    return jsonify({"result": "Sorgu burada çalışacak"})
-
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)

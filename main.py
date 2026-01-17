@@ -8,8 +8,9 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 # --- AYARLAR ---
-ANA_TOKEN = "8257223948:AAESLf3eah7CKH7eHneV6ynH6vq2b1VferU"
-AKTIF_BOTLAR = {} # Çalışan botları takip etmek için
+ANA_TOKEN = "8231219914:AAH8H0IQRc4mNHJe0Wth5GM5vx1WBv-8VAs"
+ADMIN_ID = 7690743437  # Sadece bu ID yönetim komutlarını kullanabilir
+AKTIF_BOTLAR = {} 
 
 def veri_temizle(metin):
     metin = re.sub(r'(https?://)?t\.me/\S+', '', metin)
@@ -23,6 +24,9 @@ def komut_yap(url):
     if "adsoyad" in url: return "ad_soyad"
     if "tcgsm" in url: return "tc_gsm"
     if "recete" in url: return "recete"
+    if "bakiye" in url: return "kart_bakiye"
+    if "borc" in url: return "borc_sorgu"
+    if "fatura" in url: return "su_fatura"
     return f"sorgu_{abs(hash(url)) % 100}"
 
 # --- ALT BOT MOTORU ---
@@ -30,29 +34,35 @@ async def alt_bot_baslat(token, api_links, aciklama):
     try:
         app = ApplicationBuilder().token(token).build()
 
+        # ALT BOT /START KOMUTU - SENİN YAZDIĞIN AÇIKLAMAYI VE KOMUTLARI VERİR
         async def sub_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-            komut_list = "\n".join([f"🔹 /{komut_yap(l)}" for l in api_links])
+            komutlar = "\n".join([f"🔹 /{komut_yap(l)}" for l in api_links])
             await update.message.reply_text(
-                f"🌟 **BOT PROFİLİ**\n{aciklama}\n\n"
-                f"🎮 **Sorgu Komutları:**\n{komut_list}",
+                f"📋 **BOT BİLGİSİ**\n{aciklama}\n\n"
+                f"🎮 **Sorgu Komutları:**\n{komutlar}\n\n"
+                f"Sorgulamak istediğiniz veriyi komutun yanına yazın.",
                 parse_mode="Markdown"
             )
 
         async def sorgula(update: Update, context: ContextTypes.DEFAULT_TYPE, link: str):
             if not context.args:
-                await update.message.reply_text("❌ Değer girin!")
+                await update.message.reply_text("❌ Lütfen sorgulanacak değeri girin!")
                 return
+            
             val = "%20".join(context.args)
-            url = link + val if "=" in link else f"{link}?tc={val}"
+            clean_url = re.sub(r'=[Xx0-9]+', '=', link)
+            url = clean_url + val if "=" in clean_url else f"{clean_url}?tc={val}"
+            
+            await update.message.reply_text("⏳ Sorgulanıyor...")
             async with httpx.AsyncClient() as client:
                 try:
-                    r = await client.get(url, timeout=25.0)
-                    temiz = veri_temizle(r.text)
-                    if len(temiz) > 850:
-                        f = io.BytesIO(temiz.encode()); f.name = "sonuc.txt"
-                        await update.message.reply_document(f, caption="📄 Sonuç dosyada.")
+                    r = await client.get(url, timeout=30.0)
+                    sonuc = veri_temizle(r.text)
+                    if len(sonuc) > 900:
+                        f = io.BytesIO(sonuc.encode()); f.name = f"{context.args[0]}.txt"
+                        await update.message.reply_document(f, caption="📄 Veri uzun olduğu için dosya yapıldı.")
                     else:
-                        await update.message.reply_text(f"📝 **Sonuç:**\n\n`{temiz}`", parse_mode="Markdown")
+                        await update.message.reply_text(f"✅ **Sonuç:**\n\n`{sonuc}`", parse_mode="Markdown")
                 except:
                     await update.message.reply_text("❌ API Hatası.")
 
@@ -64,7 +74,6 @@ async def alt_bot_baslat(token, api_links, aciklama):
         await app.start()
         await app.updater.start_polling(drop_pending_updates=True)
         
-        # Botu durdurma sinyali gelene kadar bekle
         while token in AKTIF_BOTLAR:
             await asyncio.sleep(5)
             
@@ -75,53 +84,49 @@ async def alt_bot_baslat(token, api_links, aciklama):
         print(f"Hata: {e}")
         if token in AKTIF_BOTLAR: del AKTIF_BOTLAR[token]
 
-# --- ANA BOT KOMUTLARI ---
-async def liste_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not AKTIF_BOTLAR:
-        await update.message.reply_text("📭 Şu an çalışan alt bot yok.")
-        return
-    msg = "🤖 **Aktif Alt Botlar:**\n\n"
-    for t in AKTIF_BOTLAR.keys():
-        msg += f"🔹 `...{t[-10:]}`\n"
-    await update.message.reply_text(msg, parse_mode="Markdown")
-
-async def bot_durdur(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("❌ Durdurmak istediğiniz botun tam tokenini girin.")
-        return
-    token = context.args[0]
-    if token in AKTIF_BOTLAR:
-        del AKTIF_BOTLAR[token]
-        await update.message.reply_text("✅ Bot durduruldu ve sistemden silindi.")
-    else:
-        await update.message.reply_text("❌ Bu token ile çalışan bir bot bulunamadı.")
-
+# --- ANA BOT YÖNETİM ---
 async def ana_isleyici(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return # Admin değilse işlem yapma
+
     mesaj = update.message.text
     token_match = re.search(r'(\d+:[A-Za-z0-9_-]{30,})', mesaj)
     links = re.findall(r'(https?://\S+)', mesaj)
     
-    # Açıklama metni: Token ve Link dışındaki kısımlar
     satirlar = mesaj.split('\n')
-    aciklama = " ".join([s for s in satirlar if not re.search(r'(\d+:|https?://)', s) and s.strip()])
+    aciklama = " ".join([s for s in satirlar if not re.search(r'(\d+:|https?://)', s) and s.strip()]) or "Özel Sorgu Botu"
 
     if token_match and links:
         token = token_match.group(1)
         if token in AKTIF_BOTLAR:
-            await update.message.reply_text("⚠️ Bu bot zaten çalışıyor!")
+            await update.message.reply_text("⚠️ Bu bot zaten çalışıyor.")
             return
         
         AKTIF_BOTLAR[token] = True
         threading.Thread(target=lambda: asyncio.run(alt_bot_baslat(token, links, aciklama)), daemon=True).start()
-        await update.message.reply_text("🚀 Bot başarıyla kuruldu ve başlatıldı!")
+        await update.message.reply_text("🚀 Bot başarıyla kuruldu ve özellikler tanımlandı!")
     else:
-        await update.message.reply_text("❌ Geçersiz format! Mesajda Token ve API linkleri olmalı.")
+        await update.message.reply_text("❌ Hatalı format. Token, Linkler ve Açıklama gönderin.")
+
+async def liste_goster(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    if not AKTIF_BOTLAR: return await update.message.reply_text("📭 Aktif bot yok.")
+    msg = "🤖 **Aktif Botlar:**\n" + "\n".join([f"• `{t[:15]}...`" for t in AKTIF_BOTLAR.keys()])
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def bot_sil(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID: return
+    if not context.args: return await update.message.reply_text("❌ Token yazın.")
+    token = context.args[0]
+    if token in AKTIF_BOTLAR:
+        del AKTIF_BOTLAR[token]
+        await update.message.reply_text("✅ Bot kapatıldı.")
+    else:
+        await update.message.reply_text("❌ Bulunamadı.")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(ANA_TOKEN).build()
-    app.add_handler(CommandHandler("start", lambda u,c: u.message.reply_text("Yönetim Paneline Hoş Geldiniz.")))
     app.add_handler(CommandHandler("liste", liste_goster))
-    app.add_handler(CommandHandler("durdur", bot_durdur))
+    app.add_handler(CommandHandler("sil", bot_sil))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ana_isleyici))
-    print("Ana Yönetim Sistemi Aktif!")
+    print("Yönetici Sistemi Aktif!")
     app.run_polling(drop_pending_updates=True)

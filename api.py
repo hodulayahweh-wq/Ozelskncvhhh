@@ -2,17 +2,22 @@ from flask import Flask, jsonify, abort
 import os, json
 
 app = Flask(__name__)
+
 DATA_DIR = "data"
+os.makedirs(DATA_DIR, exist_ok=True)
 
 @app.route("/")
 def home():
-    return {"status": "LORD API aktif"}
+    return {
+        "status": "LORD 2026 API AKTIF",
+        "endpoints": "/api/<dosya_adi>"
+    }
 
 @app.route("/api/<name>")
 def api(name):
     path = os.path.join(DATA_DIR, f"{name}.json")
     if not os.path.exists(path):
-        return abort(404)
+        abort(404, "Veri bulunamadi")
 
     with open(path, "r", encoding="utf-8") as f:
         return jsonify(json.load(f))

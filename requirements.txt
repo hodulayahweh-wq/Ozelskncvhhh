@@ -1,3 +1,5 @@
 python-telegram-bot==22.5
 flask==3.0.3
 gunicorn==23.0.0
+gevent==24.2.1   # En güncel stabil sürüm (2026 başı)
+greenlet==3.1.1  # gevent'in bağımlılığı, bazen manuel eklemek lazım

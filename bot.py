@@ -1,5 +1,4 @@
-# bot.py  (tam güncel hali – kopyala-yapıştır yap)
-
+# bot.py
 import os
 import json
 import threading
@@ -15,23 +14,24 @@ from telegram.ext import (
 
 flask_app = Flask(__name__)
 
-# Mutlak yol – Render'da dosya yolu sorunu çıkmasın diye
+# Mutlak yol (Render'da dosya yolu sorunu çıkmasın)
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "data"))
 os.makedirs(DATA_DIR, exist_ok=True)
 
-print(f"DATA_DIR: {DATA_DIR}")  # Render loglarında göreceksin
+print(f"DATA_DIR: {DATA_DIR}")
 
 API_BASE = "https://ozel-hacker-egitim.onrender.com"
+API_PREFIX = "/api/v1/search"
 
 @flask_app.route('/')
 def home():
-    return f"Bot & API aktif → {API_BASE}/api/dosyaadi deneyin"
+    return f"Bot & API aktif → {API_BASE}{API_PREFIX}/dosyaadi deneyin"
 
 @flask_app.route('/health')
 def health():
     return "OK", 200
 
-@flask_app.route('/api/<path:filename>')
+@flask_app.route(f'{API_PREFIX}/<path:filename>')
 def serve_api(filename):
     path = os.path.join(DATA_DIR, f"{filename}.json")
     print(f"API isteği: {filename} → {path}")
@@ -68,7 +68,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 "✅ Hoş geldin!\n\n"
                 "/dosyalar → listeyi gör\n"
-                f"API örnek: {API_BASE}/api/dosyaadi",
+                f"API örnek: {API_BASE}{API_PREFIX}/dosyaadi",
                 reply_markup=ReplyKeyboardRemove()
             )
         else:
@@ -82,7 +82,7 @@ async def dosyalar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Henüz dosya yok.")
         return
     files.sort()
-    msg = "Dosyalar:\n\n" + "\n".join(f"• {f} → {API_BASE}/api/{f}" for f in files)
+    msg = "Dosyalar:\n\n" + "\n".join(f"• {f} → {API_BASE}{API_PREFIX}/{f}" for f in files)
     await update.message.reply_text(msg)
 
 async def handle_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -98,7 +98,7 @@ async def handle_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         file = await doc.get_file()
         raw = await file.download_as_bytearray()
-        text = raw.decode("utf-8").strip()
+        text = raw.decode("utf-8", errors="ignore").strip()  # hatalı karakterleri görmezden gel
     except Exception as e:
         await update.message.reply_text(f"Dosya okunamadı: {str(e)}")
         return
@@ -107,22 +107,23 @@ async def handle_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text("Dosya boş.")
         return
 
-    data = None
+    # Her dosya türünü kabul et ve JSON'a dönüştür
+    data = {"raw_content": text}  # varsayılan: tüm içerik string olarak
 
-    # 1. Deneme: Zaten JSON mu?
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError:
-        # 2. TXT / düz metin ise → satırları listeye çevir
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        if lines:
-            data = {"content": lines}
-        else:
-            # En kötü durumda tek string olarak sakla
-            data = {"raw_content": text}
+    # Satır bazlı içerik varsa liste yap (çoğu txt/log dosyası için mantıklı)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if len(lines) > 1:
+        data = {
+            "line_count": len(lines),
+            "lines": lines
+        }
 
+    # Dosya adı → güvenli hale getir
     name_base = os.path.splitext(doc.file_name or "dosya")[0]
-    safe_name = "".join(c for c in name_base if c.isalnum() or c in "-_")
+    safe_name = "".join(c for c in name_base if c.isalnum() or c in "-_").lower()
+    if not safe_name:
+        safe_name = "dosya_" + str(hash(text) % 1000000)
+
     path = os.path.join(DATA_DIR, f"{safe_name}.json")
 
     try:
@@ -132,11 +133,11 @@ async def handle_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(f"Kaydetme hatası: {str(e)}")
         return
 
-    api_url = f"{API_BASE}/api/{safe_name}"
+    api_url = f"{API_BASE}{API_PREFIX}/{safe_name}"
     await update.message.reply_text(
         f"✅ Dosya kabul edildi ve API oluşturuldu!\n\n"
         f"Adı: {safe_name}\n"
-        f"API adresi: {api_url}\n\n"
+        f"API linki: {api_url}\n\n"
         f"Silmek için: /sil {safe_name}"
     )
 
@@ -159,7 +160,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     t = update.message.text
     if t == "📤 Dosya Yükle":
-        await update.message.reply_text("Herhangi bir dosyayı atabilirsin (.txt, .json vs.)")
+        await update.message.reply_text("Herhangi bir dosyayı atabilirsin (.txt, .json, .csv vs.)")
     elif t == "📊 Dosya Listesi":
         await dosyalar(update, context)
     elif t == "🗑 Dosya Sil":

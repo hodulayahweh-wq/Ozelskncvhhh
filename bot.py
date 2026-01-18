@@ -2,7 +2,7 @@ from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import os, json
 
-TOKEN = os.environ.get("8430322228:AAE0kAxUqO4cfXKDUyp0-PGPaFOe4zP56jY")
+TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = 8258235296
 CHANNEL = "@lordsystemv3"
 

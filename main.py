@@ -1,14 +1,12 @@
 import os
 import json
 import re
-import threading
-import asyncio
 from datetime import datetime
 from flask import Flask, request, jsonify, Response
 
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
-    ApplicationBuilder,
+    Application,
     CommandHandler,
     MessageHandler,
     ContextTypes,
@@ -16,25 +14,25 @@ from telegram.ext import (
 )
 
 # ======================
-# AYARLAR
+# AYARLAR (ENV)
 # ======================
-DATA_DIR = "data"
-LOG_FILE = "api.log"
-API_PREFIX = "/api/search"
-
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # https://gordonvp.onrender.com
 PORT = int(os.environ.get("PORT", 10000))
-API_KEY = os.environ.get("API_KEY")        # opsiyonel
-BOT_TOKEN = os.environ.get("BOT_TOKEN")    # telegram
 
 ADMIN_ID = 8258235296
 CHANNEL = "@lordsystemv3"
+
+DATA_DIR = "data"
+LOG_FILE = "api.log"
+API_PREFIX = "/api/search"
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # ======================
 # FLASK APP
 # ======================
-flask_app = Flask(__name__)
+app = Flask(__name__)
 
 def log(msg):
     with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -43,116 +41,25 @@ def log(msg):
 def normalize(v):
     if not v:
         return ""
-    v = re.sub(r"\s+", "", str(v))
-    if v.isdigit():
-        if v.startswith("90") and len(v) > 10:
-            v = v[2:]
-        if v.startswith("0") and len(v) > 10:
-            v = v[1:]
+    v = str(v).strip()
+    v = re.sub(r"\s+", "", v)
     return v.upper()
-
-def api_key_ok():
-    if not API_KEY:
-        return True
-    return request.args.get("key") == API_KEY
-
-@flask_app.route("/")
-def home():
-    return jsonify({
-        "status": "API aktif",
-        "search": f"{API_PREFIX}/<dosya>?alan=deger",
-        "upload": "/api/upload/<dosya> (POST)"
-    })
-
-@flask_app.route("/health")
-def health():
-    return "OK", 200
-
-@flask_app.route(f"{API_PREFIX}/<name>")
-def search(name):
-    if not api_key_ok():
-        return {"error": "API KEY hatalı"}, 401
-
-    path = os.path.join(DATA_DIR, f"{name}.json")
-    if not os.path.isfile(path):
-        return {"error": "Dosya bulunamadı"}, 404
-
-    args = dict(request.args)
-    args.pop("key", None)
-    if not args:
-        return {"error": "Parametre gerekli"}, 400
-
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    k, v = next(iter(args.items()))
-    v = normalize(v)
-
-    results = [r for r in data if normalize(r.get(k)) == v]
-
-    log(f"SORGU | {name} | {k}={v} | {len(results)}")
-
-    if not results:
-        return {"error": "Eşleşme yok"}, 404
-
-    if len(results) == 1:
-        return jsonify(results[0])
-
-    txt = ""
-    for i, r in enumerate(results, 1):
-        txt += f"--- KAYIT {i} ---\n"
-        for kk, vv in r.items():
-            txt += f"{kk}: {vv}\n"
-        txt += "\n"
-
-    return Response(txt, mimetype="text/plain")
-
-@flask_app.route("/api/upload/<name>", methods=["POST"])
-def upload(name):
-    if not api_key_ok():
-        return {"error": "API KEY hatalı"}, 401
-
-    if "file" not in request.files:
-        return {"error": "Dosya yok"}, 400
-
-    raw = request.files["file"].read().decode("utf-8", errors="ignore").strip()
-    if not raw:
-        return {"error": "Dosya boş"}, 400
-
-    try:
-        data = json.loads(raw)
-        if not isinstance(data, list):
-            raise ValueError
-    except:
-        data = [{"value": l.strip()} for l in raw.splitlines() if l.strip()]
-
-    safe = "".join(c for c in name.lower() if c.isalnum() or c in "-_")
-    path = os.path.join(DATA_DIR, f"{safe}.json")
-
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-    log(f"UPLOAD | {safe} | {len(data)}")
-    return {"status": "ok", "dosya": safe}
-
-def run_flask():
-    flask_app.run(
-        host="0.0.0.0",
-        port=PORT,
-        debug=False,
-        use_reloader=False
-    )
 
 # ======================
 # TELEGRAM BOT
 # ======================
+tg_app = Application.builder().token(BOT_TOKEN).build()
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
 
     if uid == ADMIN_ID:
-        kb = [["📤 Dosya Yükle"], ["📊 Dosya Listesi"]]
+        kb = [
+            ["📤 Dosya Yükle"],
+            ["📂 Dosya Listesi"],
+        ]
         await update.message.reply_text(
-            "👑 ADMIN PANEL",
+            "👑 ADMIN PANEL\nDosya gönderebilirsin.",
             reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
         )
         return
@@ -160,17 +67,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         m = await context.bot.get_chat_member(CHANNEL, uid)
         if m.status in ("member", "administrator", "creator"):
-            await update.message.reply_text("✅ Hoş geldin")
+            await update.message.reply_text(
+                "✅ Hoş geldin\nBot aktif.",
+                reply_markup=ReplyKeyboardRemove()
+            )
         else:
             await update.message.reply_text(f"❌ Kanala katıl: {CHANNEL}")
     except:
         await update.message.reply_text(f"❌ Kanala katıl: {CHANNEL}")
 
-async def dosyalar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def list_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
     files = [f[:-5] for f in os.listdir(DATA_DIR) if f.endswith(".json")]
     await update.message.reply_text("\n".join(files) if files else "Dosya yok")
 
-async def handle_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def upload_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
@@ -186,32 +98,84 @@ async def handle_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except:
         data = [{"value": l.strip()} for l in text.splitlines() if l.strip()]
 
-    name = os.path.splitext(doc.file_name or "dosya")[0]
-    safe = "".join(c for c in name.lower() if c.isalnum() or c in "-_")
+    name = os.path.splitext(doc.file_name)[0].lower()
+    safe = "".join(c for c in name if c.isalnum() or c in "-_")
 
-    with open(os.path.join(DATA_DIR, f"{safe}.json"), "w", encoding="utf-8") as f:
+    path = os.path.join(DATA_DIR, f"{safe}.json")
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    await update.message.reply_text(f"✅ Yüklendi\nAPI: {API_PREFIX}/{safe}?alan=deger")
+    await update.message.reply_text(
+        f"✅ Yüklendi\n"
+        f"API: {API_PREFIX}/{safe}?alan=deger"
+    )
 
-def run_bot():
-    if not BOT_TOKEN:
-        print("BOT_TOKEN yok, bot başlatılmadı.")
-        return
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("dosyalar", dosyalar))
-    app.add_handler(MessageHandler(filters.Document.ALL, handle_file_upload))
-
-    app.run_polling(close_loop=False)
+tg_app.add_handler(CommandHandler("start", start))
+tg_app.add_handler(CommandHandler("dosyalar", list_files))
+tg_app.add_handler(MessageHandler(filters.Document.ALL, upload_file))
 
 # ======================
-# MAIN (RENDER SAFE)
+# FLASK ROUTES
+# ======================
+@app.route("/", methods=["GET"])
+def index():
+    return "LORD API FREE aktif", 200
+
+@app.route("/health")
+def health():
+    return "OK", 200
+
+@app.route(f"{API_PREFIX}/<name>")
+def search(name):
+    path = os.path.join(DATA_DIR, f"{name}.json")
+    if not os.path.isfile(path):
+        return {"error": "Dosya yok"}, 404
+
+    if not request.args:
+        return {"error": "Parametre gerekli"}, 400
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    key, value = next(iter(request.args.items()))
+    value = normalize(value)
+
+    results = [
+        r for r in data
+        if key in r and normalize(r.get(key)) == value
+    ]
+
+    log(f"SORGU | {name} | {key}={value} | {len(results)}")
+
+    if not results:
+        return {"error": "Eşleşme yok"}, 404
+
+    if len(results) == 1:
+        return jsonify(results[0])
+
+    txt = ""
+    for i, r in enumerate(results, 1):
+        txt += f"--- KAYIT {i} ---\n"
+        for k, v in r.items():
+            txt += f"{k}: {v}\n"
+        txt += "\n"
+
+    return Response(txt, mimetype="text/plain")
+
+@app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), tg_app.bot)
+    tg_app.update_queue.put_nowait(update)
+    return "OK", 200
+
+@app.before_first_request
+def setup_webhook():
+    tg_app.bot.set_webhook(
+        url=f"{WEBHOOK_URL}/webhook/{BOT_TOKEN}"
+    )
+
+# ======================
+# RUN
 # ======================
 if __name__ == "__main__":
-    threading.Thread(target=run_bot, daemon=True).start()
-    run_flask()
+    app.run(host="0.0.0.0", port=PORT)

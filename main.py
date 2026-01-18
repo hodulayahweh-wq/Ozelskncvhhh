@@ -6,13 +6,13 @@ from datetime import datetime
 
 from flask import Flask, request, jsonify, Response
 
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
-    ContextTypes,
     filters,
+    ContextTypes,
 )
 
 # ======================
@@ -41,7 +41,6 @@ def home():
 @app.route("/health")
 def health():
     return "OK", 200
-
 
 # ======================
 # API SEARCH
@@ -73,7 +72,7 @@ def search(name):
     value = normalize(value)
     results = [
         r for r in data
-        if key in r and normalize(r.get(key)) == value
+        if key in r and normalize(r.get(key, "")) == value
     ]
 
     if not results:
@@ -91,9 +90,8 @@ def search(name):
 
     return Response(txt, mimetype="text/plain")
 
-
 # ======================
-# TELEGRAM BOT
+# TELEGRAM BOT HANDLER'LAR
 # ======================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
@@ -102,7 +100,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = [["📤 Dosya Yükle"], ["📄 Dosyalar"]]
         await update.message.reply_text(
             "👑 ADMIN PANEL",
-            reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True),
+            reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=False),
         )
         return
 
@@ -112,59 +110,81 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("✅ Hoş geldin")
         else:
             await update.message.reply_text(f"❌ Kanala katıl: {CHANNEL}")
-    except:
+    except Exception:
         await update.message.reply_text(f"❌ Kanala katıl: {CHANNEL}")
-
 
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
+    if not update.message.document:
+        await update.message.reply_text("Lütfen bir dosya gönder.")
+        return
+
     doc = update.message.document
     file = await doc.get_file()
-    raw = await file.download_as_bytearray()
-    text = raw.decode("utf-8", errors="ignore")
-
+    raw_bytes = await file.download_as_bytearray()
+    
     try:
+        text = raw_bytes.decode("utf-8", errors="ignore")
         data = json.loads(text)
         if not isinstance(data, list):
-            raise ValueError
-    except:
-        data = [{"value": l.strip()} for l in text.splitlines() if l.strip()]
+            raise ValueError("JSON liste olmalı")
+    except Exception:
+        # JSON parse edilemedi → satır satır oku
+        lines = text.splitlines()
+        data = [{"value": line.strip()} for line in lines if line.strip()]
 
-    name = os.path.splitext(doc.file_name)[0].lower()
-    safe = "".join(c for c in name if c.isalnum() or c in "-_")
+    name = os.path.splitext(doc.file_name or "data")[0].lower()
+    safe_name = "".join(c for c in name if c.isalnum() or c in "-_")
 
-    with open(os.path.join(DATA_DIR, f"{safe}.json"), "w", encoding="utf-8") as f:
+    file_path = os.path.join(DATA_DIR, f"{safe_name}.json")
+    with open(file_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    await update.message.reply_text(f"✅ Yüklendi\n/api/search/{safe}?alan=deger")
+    await update.message.reply_text(
+        f"✅ Yüklendi: /{safe_name}\n"
+        f"Örnek kullanım:\n"
+        f"/api/search/{safe_name}?key=deger"
+    )
 
-
+# ======================
+# BOT BAŞLATMA
+# ======================
 def run_bot():
     if not BOT_TOKEN:
-        print("BOT_TOKEN yok")
+        print("HATA: BOT_TOKEN environment variable tanımlı değil!")
         return
 
     application = ApplicationBuilder().token(BOT_TOKEN).build()
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.Document.ALL, handle_file))
 
-    application.run_polling()
-
+    print("Bot polling başlıyor...")
+    application.run_polling(
+        poll_interval=0.5,
+        timeout=10,
+        drop_pending_updates=True,      # restart sonrası eski mesajları at
+        allowed_updates=Update.ALL_TYPES
+    )
 
 # ======================
 # MAIN
 # ======================
 if __name__ == "__main__":
-    threading.Thread(
-        target=lambda: app.run(
-            host="0.0.0.0",
-            port=PORT,
-            debug=False,
-            use_reloader=False
-        ),
+    # Flask'ı ayrı thread'de çalıştır
+    flask_thread = threading.Thread(
+        target=app.run,
+        kwargs={
+            "host": "0.0.0.0",
+            "port": PORT,
+            "debug": False,
+            "use_reloader": False
+        },
         daemon=True
-    ).start()
+    )
+    flask_thread.start()
 
+    # Bot'u ana thread'de çalıştır (asyncio gerektiği için)
     run_bot()

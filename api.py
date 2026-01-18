@@ -10,16 +10,17 @@ os.makedirs(DATA_DIR, exist_ok=True)
 def home():
     return {
         "status": "LORD 2026 API AKTIF",
-        "endpoints": "/api/<dosya_adi>"
+        "usage": "/api/<dosya_adi>"
     }
 
 @app.route("/api/<name>")
-def api(name):
-    path = os.path.join(DATA_DIR, f"{name}.json")
-    if not os.path.exists(path):
-        abort(404, "Veri bulunamadi")
+def get_data(name):
+    file_path = os.path.join(DATA_DIR, f"{name}.json")
 
-    with open(path, "r", encoding="utf-8") as f:
+    if not os.path.exists(file_path):
+        abort(404, "Dosya bulunamadı")
+
+    with open(file_path, "r", encoding="utf-8") as f:
         return jsonify(json.load(f))
 
 if __name__ == "__main__":

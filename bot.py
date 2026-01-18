@@ -6,7 +6,7 @@ from telegram.ext import (
     ContextTypes, filters
 )
 
-TOKEN = "8590652604:AAHKSHzcQFUNfMkc1Zg7QjtzfThA_abkWRY"
+TOKEN = "8430322228:AAE0kAxUqO4cfXKDUyp0-PGPaFOe4zP56jY"
 ADMIN_ID = 8258235296
 DATA_DIR = "data"
 DB_FILE = "db.json"

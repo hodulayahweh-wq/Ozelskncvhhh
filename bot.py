@@ -1,95 +1,81 @@
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import os, json
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder, CommandHandler,
-    MessageHandler, CallbackQueryHandler,
-    ContextTypes, filters
-)
 
-TOKEN = "8430322228:AAE0kAxUqO4cfXKDUyp0-PGPaFOe4zP56jY"
+TOKEN = os.environ.get("8430322228:AAE0kAxUqO4cfXKDUyp0-PGPaFOe4zP56jY")
 ADMIN_ID = 8258235296
-DATA_DIR = "data"
-DB_FILE = "db.json"
+CHANNEL = "@lordsystemv3"
 
+DATA_DIR = "data"
 os.makedirs(DATA_DIR, exist_ok=True)
 
-def load_db():
-    if not os.path.exists(DB_FILE):
-        return {"files": {}}
-    return json.load(open(DB_FILE))
-
-def save_db(db):
-    json.dump(db, open(DB_FILE, "w"), indent=2)
-
-# ---------- START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id == ADMIN_ID:
-        await update.message.reply_text("👑 Admin Panel\nDosya gönder, açıklamaya /komut yaz")
+    uid = update.effective_user.id
+
+    if uid == ADMIN_ID:
+        kb = [["📤 Dosya Yükle"], ["📊 API Listesi"]]
+        await update.message.reply_text(
+            "👑 ADMIN PANEL",
+            reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True)
+        )
         return
 
-    db = load_db()
-    buttons = [
-        [InlineKeyboardButton(f"📂 {k}", callback_data=k)]
-        for k in db["files"]
-    ]
-    await update.message.reply_text(
-        "📦 Dosya Listesi",
-        reply_markup=InlineKeyboardMarkup(buttons)
-    )
+    try:
+        m = await context.bot.get_chat_member(CHANNEL, uid)
+        if m.status in ["member", "administrator", "creator"]:
+            await update.message.reply_text("✅ Hoş geldin\nKomut: /dosyalar")
+        else:
+            await update.message.reply_text(f"❌ Kanala katıl:\n{CHANNEL}")
+    except:
+        await update.message.reply_text(f"❌ Kanala katıl:\n{CHANNEL}")
 
-# ---------- BUTON ----------
-async def buton(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-
-    db = load_db()
-    komut = q.data
-
-    if komut in db["files"]:
-        await q.message.reply_document(db["files"][komut]["file_id"])
-
-# ---------- DOSYA YÜKLE (ADMIN) ----------
-async def dosya(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
 
-    if not update.message.caption:
-        await update.message.reply_text("❌ Açıklamaya /komut yaz")
-        return
-
-    komut = update.message.caption.replace("/", "").strip()
     doc = update.message.document
-
-    path = f"{DATA_DIR}/{komut}.json"
     file = await doc.get_file()
-    await file.download_to_drive(path)
+    raw = await file.download_as_bytearray()
 
-    # JSON kontrol
     try:
-        json.load(open(path))
+        text = raw.decode("utf-8")
+        data = json.loads(text)
     except:
-        await update.message.reply_text("❌ Dosya JSON değil")
-        os.remove(path)
+        await update.message.reply_text("❌ Geçersiz JSON")
         return
 
-    db = load_db()
-    db["files"][komut] = {
-        "file_id": doc.file_id,
-        "api": f"/api/{komut}"
-    }
-    save_db(db)
+    if not isinstance(data, dict):
+        await update.message.reply_text("❌ JSON nesne olmalı")
+        return
 
-    await update.message.reply_text(
-        f"✅ Yüklendi\n"
-        f"📦 Kullanıcıda görünecek\n"
-        f"🌐 API: /api/{komut}"
-    )
+    created = []
 
-# ---------- RUN ----------
-app = ApplicationBuilder().token(TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(buton))
-app.add_handler(MessageHandler(filters.Document.ALL, dosya))
+    for api_name, api_data in data.items():
+        path = os.path.join(DATA_DIR, f"{api_name}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(api_data, f, ensure_ascii=False, indent=2)
+        created.append(api_name)
 
-print("Bot çalışıyor")
-app.run_polling()
+    msg = "✅ Çoklu API oluşturuldu:\n\n"
+    msg += "\n".join(f"/api/{x}" for x in created)
+    await update.message.reply_text(msg)
+
+async def dosyalar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    files = [f.replace(".json", "") for f in os.listdir(DATA_DIR)]
+    if not files:
+        await update.message.reply_text("📂 Dosya yok")
+        return
+
+    msg = "📂 Mevcut API’ler:\n\n"
+    msg += "\n".join(f"/{f}" for f in files)
+    await update.message.reply_text(msg)
+
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("dosyalar", dosyalar))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()

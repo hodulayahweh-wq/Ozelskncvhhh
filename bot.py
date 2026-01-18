@@ -1,4 +1,5 @@
-# bot.py
+# bot.py  (tam güncel hali – kopyala-yapıştır yap)
+
 import os
 import json
 import threading
@@ -12,12 +13,19 @@ from telegram.ext import (
     ContextTypes,
 )
 
-# Flask uygulaması - Render health check ve API endpoint'leri için
 flask_app = Flask(__name__)
+
+# Mutlak yol – Render'da dosya yolu sorunu çıkmasın diye
+DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "data"))
+os.makedirs(DATA_DIR, exist_ok=True)
+
+print(f"DATA_DIR: {DATA_DIR}")  # Render loglarında göreceksin
+
+API_BASE = "https://ozel-hacker-egitim.onrender.com"
 
 @flask_app.route('/')
 def home():
-    return "Bot ve API çalışıyor - /api/dosyaadi deneyin"
+    return f"Bot & API aktif → {API_BASE}/api/dosyaadi deneyin"
 
 @flask_app.route('/health')
 def health():
@@ -25,15 +33,15 @@ def health():
 
 @flask_app.route('/api/<path:filename>')
 def serve_api(filename):
-    path = os.path.join("data", f"{filename}.json")
+    path = os.path.join(DATA_DIR, f"{filename}.json")
+    print(f"API isteği: {filename} → {path}")
     if not os.path.isfile(path):
         return jsonify({"error": "Dosya bulunamadı"}), 404
     try:
         with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return jsonify(data)
+            return jsonify(json.load(f))
     except Exception as e:
-        return jsonify({"error": f"JSON okuma hatası: {str(e)}"}), 500
+        return jsonify({"error": str(e)}), 500
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
@@ -46,26 +54,25 @@ if not TOKEN:
 
 ADMIN_ID = 8258235296
 CHANNEL = "@lordsystemv3"
-DATA_DIR = "data"
-os.makedirs(DATA_DIR, exist_ok=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-
     if uid == ADMIN_ID:
         kb = [["📤 Dosya Yükle"], ["📊 Dosya Listesi"], ["🗑 Dosya Sil"]]
         await update.message.reply_text("👑 ADMIN PANEL", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True))
         return
 
     try:
-        member = await context.bot.get_chat_member(CHANNEL, uid)
-        if member.status in ["member", "administrator", "creator", "restricted"]:
+        m = await context.bot.get_chat_member(CHANNEL, uid)
+        if m.status in ["member", "administrator", "creator", "restricted"]:
             await update.message.reply_text(
-                "✅ Hoş geldin!\n\n/dosyalar → dosyaları gör ve indir\nDestek: @LordDestekHat",
+                "✅ Hoş geldin!\n\n"
+                "/dosyalar → listeyi gör\n"
+                f"API örnek: {API_BASE}/api/dosyaadi",
                 reply_markup=ReplyKeyboardRemove()
             )
         else:
-            await update.message.reply_text(f"❌ Kanala katıl:\n{CHANNEL}\n\nKatıldıktan sonra /start yaz.")
+            await update.message.reply_text(f"❌ Kanala katıl:\n{CHANNEL}")
     except:
         await update.message.reply_text(f"❌ Kanala katıl:\n{CHANNEL}")
 
@@ -75,7 +82,7 @@ async def dosyalar(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Henüz dosya yok.")
         return
     files.sort()
-    msg = "Mevcut dosyalar:\n\n" + "\n".join(f"• {f} → /api/{f}" for f in files)
+    msg = "Dosyalar:\n\n" + "\n".join(f"• {f} → {API_BASE}/api/{f}" for f in files)
     await update.message.reply_text(msg)
 
 async def handle_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -91,24 +98,47 @@ async def handle_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         file = await doc.get_file()
         raw = await file.download_as_bytearray()
-        text = raw.decode("utf-8")
-        data = json.loads(text)
+        text = raw.decode("utf-8").strip()
     except Exception as e:
-        await update.message.reply_text(f"Geçersiz dosya veya JSON: {str(e)}")
+        await update.message.reply_text(f"Dosya okunamadı: {str(e)}")
         return
 
-    if not isinstance(data, dict):
-        await update.message.reply_text("JSON obje olmalı")
+    if not text:
+        await update.message.reply_text("Dosya boş.")
         return
+
+    data = None
+
+    # 1. Deneme: Zaten JSON mu?
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        # 2. TXT / düz metin ise → satırları listeye çevir
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if lines:
+            data = {"content": lines}
+        else:
+            # En kötü durumda tek string olarak sakla
+            data = {"raw_content": text}
 
     name_base = os.path.splitext(doc.file_name or "dosya")[0]
     safe_name = "".join(c for c in name_base if c.isalnum() or c in "-_")
     path = os.path.join(DATA_DIR, f"{safe_name}.json")
 
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        await update.message.reply_text(f"Kaydetme hatası: {str(e)}")
+        return
 
-    await update.message.reply_text(f"Yüklendi! API: /api/{safe_name}\nSilmek için: /sil {safe_name}")
+    api_url = f"{API_BASE}/api/{safe_name}"
+    await update.message.reply_text(
+        f"✅ Dosya kabul edildi ve API oluşturuldu!\n\n"
+        f"Adı: {safe_name}\n"
+        f"API adresi: {api_url}\n\n"
+        f"Silmek için: /sil {safe_name}"
+    )
 
 async def sil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -120,35 +150,35 @@ async def sil(update: Update, context: ContextTypes.DEFAULT_TYPE):
     path = os.path.join(DATA_DIR, f"{name}.json")
     if os.path.isfile(path):
         os.remove(path)
-        await update.message.reply_text(f"{name} silindi.")
+        await update.message.reply_text(f"🗑 {name} silindi.")
     else:
-        await update.message.reply_text("Dosya yok.")
+        await update.message.reply_text("Dosya bulunamadı.")
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-    text = update.message.text
-    if text == "📤 Dosya Yükle":
-        await update.message.reply_text("JSON/TXT dosyasını at.")
-    elif text == "📊 Dosya Listesi":
+    t = update.message.text
+    if t == "📤 Dosya Yükle":
+        await update.message.reply_text("Herhangi bir dosyayı atabilirsin (.txt, .json vs.)")
+    elif t == "📊 Dosya Listesi":
         await dosyalar(update, context)
-    elif text == "🗑 Dosya Sil":
+    elif t == "🗑 Dosya Sil":
         await update.message.reply_text("Silmek için /sil <dosyaadi> yaz.")
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
 
-    application = ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("dosyalar", dosyalar))
-    application.add_handler(CommandHandler("sil", sil))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("dosyalar", dosyalar))
+    app.add_handler(CommandHandler("sil", sil))
 
-    application.add_handler(MessageHandler(filters.Document.ALL & ~filters.COMMAND, handle_file_upload))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    app.add_handler(MessageHandler(filters.Document.ALL & ~filters.COMMAND, handle_file_upload))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     print("Bot & API başladı")
-    application.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()

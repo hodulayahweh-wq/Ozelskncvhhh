@@ -4,6 +4,7 @@ import re
 import threading
 from datetime import datetime
 from flask import Flask, request, jsonify, Response
+
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder,
@@ -21,8 +22,8 @@ LOG_FILE = "api.log"
 API_PREFIX = "/api/search"
 
 PORT = int(os.environ.get("PORT", 10000))
-API_KEY = os.environ.get("API_KEY")  # yoksa herkese açık
-BOT_TOKEN = os.environ.get("BOT_TOKEN")  # bot kullanacaksan şart
+API_KEY = os.environ.get("API_KEY")  # opsiyonel
+BOT_TOKEN = os.environ.get("BOT_TOKEN")  # telegram için
 
 ADMIN_ID = 8258235296
 CHANNEL = "@lordsystemv3"
@@ -30,7 +31,7 @@ CHANNEL = "@lordsystemv3"
 os.makedirs(DATA_DIR, exist_ok=True)
 
 # ======================
-# FLASK
+# FLASK APP (RENDER İÇİN ZORUNLU)
 # ======================
 flask_app = Flask(__name__)
 
@@ -82,21 +83,14 @@ def search(name):
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
-    if not isinstance(data, list):
-        return {"error": "JSON liste formatında olmalı"}, 500
-
     key, value = next(iter(request.args.items()))
     if key == "key":
         return {"error": "Arama alanı yok"}, 400
 
     value = normalize(value)
-    results = []
+    results = [r for r in data if key in r and normalize(r.get(key)) == value]
 
-    for row in data:
-        if key in row and normalize(row.get(key)) == value:
-            results.append(row)
-
-    log(f"SORGU | dosya={name} | {key}={value} | sonuc={len(results)}")
+    log(f"SORGU | {name} | {key}={value} | {len(results)}")
 
     if not results:
         return {"error": "Eşleşme yok"}, 404
@@ -129,14 +123,12 @@ def upload(name):
     if not raw:
         return {"error": "Dosya boş"}, 400
 
-    # JSON ise aynen; değilse satır satır JSON
     try:
         data = json.loads(raw)
         if not isinstance(data, list):
-            return {"error": "JSON liste ([]) olmalı"}, 400
+            raise ValueError
     except:
-        lines = [l.strip() for l in raw.splitlines() if l.strip()]
-        data = [{"value": l} for l in lines]
+        data = [{"value": l.strip()} for l in raw.splitlines() if l.strip()]
 
     safe = "".join(c for c in name.lower() if c.isalnum() or c in "-_")
     path = os.path.join(DATA_DIR, f"{safe}.json")
@@ -144,16 +136,17 @@ def upload(name):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    log(f"UPLOAD | {safe} | kayıt={len(data)}")
+    log(f"UPLOAD | {safe} | {len(data)}")
 
-    return {
-        "status": "yüklendi",
-        "dosya": safe,
-        "api": f"{API_PREFIX}/{safe}?alan=deger"
-    }
+    return {"status": "yüklendi", "dosya": safe}
 
 def run_flask():
-    flask_app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
+    flask_app.run(
+        host="0.0.0.0",
+        port=PORT,
+        debug=False,
+        use_reloader=False
+    )
 
 # ======================
 # TELEGRAM BOT
@@ -170,11 +163,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         m = await context.bot.get_chat_member(CHANNEL, uid)
-        if m.status in ["member", "administrator", "creator", "restricted"]:
+        if m.status in ("member", "administrator", "creator", "restricted"):
             await update.message.reply_text(
-                "✅ Hoş geldin!\n\n"
-                "Kullanım:\n"
-                f"{API_PREFIX}/dosya?alan=deger",
+                "✅ Hoş geldin",
                 reply_markup=ReplyKeyboardRemove()
             )
         else:
@@ -191,76 +182,38 @@ async def handle_file_upload(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     doc = update.message.document
-    if not doc:
-        return
-
     file = await doc.get_file()
     raw = await file.download_as_bytearray()
     text = raw.decode("utf-8", errors="ignore").strip()
-    if not text:
-        await update.message.reply_text("Dosya boş.")
-        return
 
-    # JSON ise aynen; değilse satır satır JSON
     try:
         data = json.loads(text)
         if not isinstance(data, list):
             raise ValueError
     except:
-        lines = [l.strip() for l in text.splitlines() if l.strip()]
-        data = [{"value": l} for l in lines]
+        data = [{"value": l.strip()} for l in text.splitlines() if l.strip()]
 
     name = os.path.splitext(doc.file_name or "dosya")[0].lower()
     safe = "".join(c for c in name if c.isalnum() or c in "-_")
-    path = os.path.join(DATA_DIR, f"{safe}.json")
 
-    with open(path, "w", encoding="utf-8") as f:
+    with open(os.path.join(DATA_DIR, f"{safe}.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    await update.message.reply_text(
-        f"✅ Yüklendi\n"
-        f"API: {API_PREFIX}/{safe}?alan=deger"
-    )
-
-async def sil(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    if not context.args:
-        await update.message.reply_text("Kullanım: /sil dosyaadi")
-        return
-    name = context.args[0]
-    path = os.path.join(DATA_DIR, f"{name}.json")
-    if os.path.isfile(path):
-        os.remove(path)
-        await update.message.reply_text("🗑 Silindi")
-    else:
-        await update.message.reply_text("Dosya yok")
-
-async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    t = update.message.text
-    if t == "📤 Dosya Yükle":
-        await update.message.reply_text("Dosyayı gönder (.json/.txt/.csv)")
-    elif t == "📊 Dosya Listesi":
-        await dosyalar(update, context)
-    elif t == "🗑 Dosya Sil":
-        await update.message.reply_text("Silmek için: /sil dosyaadi")
+    await update.message.reply_text(f"✅ Yüklendi\nAPI: {API_PREFIX}/{safe}?alan=deger")
 
 def run_bot():
     if not BOT_TOKEN:
-        print("BOT_TOKEN yok, bot başlatılmadı.")
+        print("BOT_TOKEN yok, sadece API çalışıyor.")
         return
+
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("dosyalar", dosyalar))
-    app.add_handler(CommandHandler("sil", sil))
     app.add_handler(MessageHandler(filters.Document.ALL, handle_file_upload))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling()
 
 # ======================
-# MAIN
+# MAIN (RENDER SAFE)
 # ======================
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
